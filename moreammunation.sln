@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36301.6 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "moreammunation", "moreammunation\moreammunation.csproj", "{7B519C98-96A7-4A1B-AA0D-69E1ABF44609}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7B519C98-96A7-4A1B-AA0D-69E1ABF44609}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7B519C98-96A7-4A1B-AA0D-69E1ABF44609}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7B519C98-96A7-4A1B-AA0D-69E1ABF44609}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7B519C98-96A7-4A1B-AA0D-69E1ABF44609}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {806F9034-CCF0-4E24-BD87-C8BBDC6A26CC}
+	EndGlobalSection
+EndGlobal
