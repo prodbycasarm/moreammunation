@@ -8,6 +8,7 @@ using LemonUI.Menus;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 
@@ -295,6 +296,7 @@ namespace moreammunation
         private List<Blip> armoryZoneBlips = new List<Blip>();
         private ObjectPool pool;
         private NativeMenu armoryMenu;
+        private NativeMenu cHWeapon;
         private NativeMenu meleeSubMenu;
         private NativeMenu handgunsSubMenu;
         private NativeMenu smgSubMenu;
@@ -346,6 +348,167 @@ namespace moreammunation
                 )
             );
             pool.Add(armoryMenu);
+            Dictionary<WeaponComponentHash, string> chcustomComponentNames = new Dictionary<WeaponComponentHash, string>
+                {
+                    {(WeaponComponentHash)4007263587u, "Knuckle Varmod Ballas"},
+                    {(WeaponComponentHash)4081463091u, "Knuckle Varmod Base"},
+                    {(WeaponComponentHash)2539772380u, "Knuckle Varmod Diamond"},
+                    {(WeaponComponentHash)1351683121u, "Knuckle Varmod Dollar"},
+                    {(WeaponComponentHash)2112683568u, "Knuckle Varmod Hate"},
+                    {(WeaponComponentHash)3800804335u, "Knuckle Varmod King"},
+                    {(WeaponComponentHash)1062111910u, "Knuckle Varmod Love"},
+                    {(WeaponComponentHash)3323197061u, "Knuckle Varmod Pimp"},
+                    {(WeaponComponentHash)146278587u,  "Knuckle Varmod Player"},
+                    {(WeaponComponentHash)2062808965u, "Knuckle Varmod Vagos"},
+                    {(WeaponComponentHash)2436343040u, "Switchblade Varmod Base"},
+                    {(WeaponComponentHash)1530822070u, "Switchblade Varmod Var1"},
+                    {(WeaponComponentHash)3885209186u, "Switchblade Varmod Var2"},
+                    {(WeaponComponentHash)3372082259u, "Green Version"},
+                    {(WeaponComponentHash)3014965697u, "Orange Version"}
+                };
+            List<WeaponComponentHash> chcustomComponentHashes = new List<WeaponComponentHash>
+                {
+                    (WeaponComponentHash)4007263587u, // KnuckleVarmodBallas
+                    (WeaponComponentHash)4081463091u, // KnuckleVarmodBase
+                    (WeaponComponentHash)2539772380u, // KnuckleVarmodDiamond
+                    (WeaponComponentHash)1351683121u, // KnuckleVarmodDollar
+                    (WeaponComponentHash)2112683568u, // KnuckleVarmodHate
+                    (WeaponComponentHash)3800804335u, // KnuckleVarmodKing
+                    (WeaponComponentHash)1062111910u, // KnuckleVarmodLove
+                    (WeaponComponentHash)3323197061u, // KnuckleVarmodPimp
+                    (WeaponComponentHash)146278587u,  // KnuckleVarmodPlayer
+                    (WeaponComponentHash)2062808965u, // KnuckleVarmodVagos
+                    (WeaponComponentHash)2436343040u, // SwitchbladeVarmodBase
+                    (WeaponComponentHash)1530822070u, // SwitchbladeVarmodVar1
+                    (WeaponComponentHash)3885209186u, // SwitchbladeVarmodVar2
+                    (WeaponComponentHash)3372082259u, // Example switchblade ID you gave
+                    (WeaponComponentHash)3014965697u  // Another ID you gave
+
+
+                };
+
+            // Currently Held Weapon logic
+            cHWeapon = new NativeMenu(
+                "",
+                "Currently Held Weapon",
+                "Customize or sell the weapon you’re currently holding.",
+                new ScaledTexture(
+                    PointF.Empty,
+                    new SizeF(431, 107),
+                    "thumbnail_ammunation_net",
+                    "ammunation_banner"
+                )
+            );
+            pool.Add(cHWeapon);
+            var cHWeaponItem = armoryMenu.AddSubMenu(cHWeapon);
+
+            
+
+            cHWeapon.Shown += (sender, args) =>
+            {
+                cHWeapon.Clear();
+
+                WeaponHash heldWeaponHash = Game.Player.Character.Weapons.Current.Hash;
+
+                if (!WeaponValues.ContainsKey(heldWeaponHash))
+                {
+                    GTA.UI.Notification.Show("~y~You are not holding a supported weapon.");
+                    return;
+                }
+
+                int price = WeaponValues[heldWeaponHash];
+                string name = heldWeaponHash.ToString(); // Optional: use friendly name
+                var weapons = Game.Player.Character.Weapons;
+
+                // Create submenu for this weapon
+                var weaponMenu = new NativeMenu("", name, $"Manage your {name}");
+                pool.Add(weaponMenu);
+
+                // SELL
+                var sellItem = new NativeItem("Sell", $"Resell for ${price}");
+                sellItem.Activated += (s1, a1) =>
+                {
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        return;
+                    }
+
+                    weapons.Remove(heldWeaponHash);
+                    Game.Player.Money += price;
+
+                    GTA.UI.Notification.Show($"~g~Sold {name} for ${price}");
+                    sellItem.Enabled = false;
+                    sellItem.Description = "~c~You no longer own this weapon";
+            
+                };
+
+                // CUSTOMIZE
+                var customizeMenu = new NativeMenu(
+                    "",
+                    $"{name} Customization",
+                    $"Customize your {name}",
+                    new ScaledTexture(
+                        PointF.Empty,
+                        new SizeF(431, 107),
+                        "thumbnail_ammunation_net",
+                        "ammunation_banner"
+                    )
+                );
+                pool.Add(customizeMenu);
+
+                var openCompMenuItem = new NativeItem("Manage Attachments");
+                customizeMenu.Add(openCompMenuItem);
+
+                openCompMenuItem.Activated += (s2, a2) =>
+                {
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show("~r~You don't own this weapon.");
+                        return;
+                    }
+
+                    customizeMenu.Clear();
+
+                    var weapon = weapons[heldWeaponHash];
+                    var componentsList = new List<NativeItem>();
+
+                    foreach (var component in weapon.Components)
+                    {
+                        if (!chcustomComponentHashes.Contains(component.ComponentHash))
+                            continue;
+
+                        string compName = chcustomComponentNames.TryGetValue(component.ComponentHash, out var niceName)
+                            ? niceName
+                            : component.ComponentHash.ToString();
+
+                        var compItem = new NativeItem(compName);
+                        compItem.Activated += (s3, a3) =>
+                        {
+                            component.Active = !component.Active;
+
+
+                        };
+
+                        compItem.RightBadge = component.Active ? CreateBadge() : null;
+                        componentsList.Add(compItem);
+                    }
+
+                    foreach (var item in componentsList)
+                        customizeMenu.Add(item);
+
+                    customizeMenu.Visible = true;
+                };
+
+                weaponMenu.Add(sellItem);
+                weaponMenu.AddSubMenu(customizeMenu);
+                cHWeapon.AddSubMenu(weaponMenu);
+
+                GTA.UI.Notification.Show($"~g~Currently holding: {name}");
+            };
+
+
+
             var removeAllItem = new NativeItem("Sell All Weapons");
             var giveAllItem = new NativeItem("Buy All Weapons");
             // Badge creator
@@ -361,6 +524,20 @@ namespace moreammunation
                 selected.RightBadge = CreateBadge();  // Show on selected
                 other.RightBadge = null;             // Hide on other
             }
+
+
+            
+
+
+
+
+
+
+
+
+
+
+
             // Logic to check if player owns all weapons 
             bool HasAllWeapons()
             {
@@ -428,6 +605,8 @@ namespace moreammunation
                 bool hasAll = HasAllWeapons();
                 bool hasNone = HasNoWeapons();
 
+                giveAllItem.RightBadge = null;
+                removeAllItem.RightBadge = null;
                 // Update Buy All
                 giveAllItem.Enabled = !hasAll;
 
@@ -438,6 +617,11 @@ namespace moreammunation
 
 
             }
+            // Update badges based on current state
+            armoryMenu.Shown += (sender, args) =>
+            {
+                RefreshBuySellItems();
+            };
             armoryMenu.Add(removeAllItem);
             armoryMenu.Add(giveAllItem);
             RefreshBuySellItems();
@@ -489,6 +673,7 @@ namespace moreammunation
 
 
                 };
+
 
 
             // Create Melee submenu
@@ -2579,6 +2764,13 @@ namespace moreammunation
                         WeaponComponentHash.RevolverMk2ClipHollowPoint,
                         WeaponComponentHash.RevolverMk2ClipIncendiary,
                         WeaponComponentHash.RevolverMk2ClipTracer,
+
+                        //Specail Carbine Mk2
+                        WeaponComponentHash.SpecialCarbineMk2ClipArmorPiercing,
+                        WeaponComponentHash.SpecialCarbineMk2ClipFMJ,
+                        WeaponComponentHash.SpecialCarbineMk2ClipIncendiary,
+                        WeaponComponentHash.SpecialCarbineMk2ClipTracer,
+
 
                         // SMG Mk2
                         WeaponComponentHash.SMGMk2ClipFMJ,
