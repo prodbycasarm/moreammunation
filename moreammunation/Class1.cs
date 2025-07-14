@@ -8,6 +8,7 @@ using LemonUI.Menus;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 
@@ -347,12 +348,50 @@ namespace moreammunation
                 )
             );
             pool.Add(armoryMenu);
+            Dictionary<WeaponComponentHash, string> chcustomComponentNames = new Dictionary<WeaponComponentHash, string>
+                {
+                    {(WeaponComponentHash)4007263587u, "Knuckle Varmod Ballas"},
+                    {(WeaponComponentHash)4081463091u, "Knuckle Varmod Base"},
+                    {(WeaponComponentHash)2539772380u, "Knuckle Varmod Diamond"},
+                    {(WeaponComponentHash)1351683121u, "Knuckle Varmod Dollar"},
+                    {(WeaponComponentHash)2112683568u, "Knuckle Varmod Hate"},
+                    {(WeaponComponentHash)3800804335u, "Knuckle Varmod King"},
+                    {(WeaponComponentHash)1062111910u, "Knuckle Varmod Love"},
+                    {(WeaponComponentHash)3323197061u, "Knuckle Varmod Pimp"},
+                    {(WeaponComponentHash)146278587u,  "Knuckle Varmod Player"},
+                    {(WeaponComponentHash)2062808965u, "Knuckle Varmod Vagos"},
+                    {(WeaponComponentHash)2436343040u, "Switchblade Varmod Base"},
+                    {(WeaponComponentHash)1530822070u, "Switchblade Varmod Var1"},
+                    {(WeaponComponentHash)3885209186u, "Switchblade Varmod Var2"},
+                    {(WeaponComponentHash)3372082259u, "Green Version"},
+                    {(WeaponComponentHash)3014965697u, "Orange Version"}
+                };
+            List<WeaponComponentHash> chcustomComponentHashes = new List<WeaponComponentHash>
+                {
+                    (WeaponComponentHash)4007263587u, // KnuckleVarmodBallas
+                    (WeaponComponentHash)4081463091u, // KnuckleVarmodBase
+                    (WeaponComponentHash)2539772380u, // KnuckleVarmodDiamond
+                    (WeaponComponentHash)1351683121u, // KnuckleVarmodDollar
+                    (WeaponComponentHash)2112683568u, // KnuckleVarmodHate
+                    (WeaponComponentHash)3800804335u, // KnuckleVarmodKing
+                    (WeaponComponentHash)1062111910u, // KnuckleVarmodLove
+                    (WeaponComponentHash)3323197061u, // KnuckleVarmodPimp
+                    (WeaponComponentHash)146278587u,  // KnuckleVarmodPlayer
+                    (WeaponComponentHash)2062808965u, // KnuckleVarmodVagos
+                    (WeaponComponentHash)2436343040u, // SwitchbladeVarmodBase
+                    (WeaponComponentHash)1530822070u, // SwitchbladeVarmodVar1
+                    (WeaponComponentHash)3885209186u, // SwitchbladeVarmodVar2
+                    (WeaponComponentHash)3372082259u, // Example switchblade ID you gave
+                    (WeaponComponentHash)3014965697u  // Another ID you gave
+
+
+                };
 
             // Currently Held Weapon logic
             cHWeapon = new NativeMenu(
                 "",
                 "Currently Held Weapon",
-                "Select a melee weapon to purchase.",
+                "Customize or sell the weapon you’re currently holding.",
                 new ScaledTexture(
                     PointF.Empty,
                     new SizeF(431, 107),
@@ -362,49 +401,49 @@ namespace moreammunation
             );
             pool.Add(cHWeapon);
             var cHWeaponItem = armoryMenu.AddSubMenu(cHWeapon);
-            /*
-            foreach (var melee in MeleeValues)
-            {
-                WeaponHash hash = melee.Key;
-                int price = melee.Value;
-                string name = hash.ToString().Replace("WeaponHash.", "").Replace('_', ' ');
-                var weaponMenu = new NativeMenu("", name, $"Manage your {name}",
-                    new ScaledTexture(
-                    PointF.Empty,
-                    new SizeF(431, 107),
-                    "thumbnail_ammunation_net",
-                    "ammunation_banner"
-                )
-                );
-                pool.Add(weaponMenu);
-                var equipItem = new NativeItem("Equip", $"Equiped ${price}");
-                var buyItem = new NativeItem("Buy", $"Price: ${price}");
-                var sellItem = new NativeItem("Sell", $"Resell for ${price}");
-                var openCompMenuItem = new NativeItem("Manage Attachments");
-                // Store references
-                meleeEquipItems[hash] = equipItem;
-                meleeItems[hash] = buyItem;
-                meleeSellItems[hash] = sellItem;
-                meleeAttachments[hash] = openCompMenuItem;
-                equipItem.Activated += (s, a) =>
-                {
-                    var weapons = Game.Player.Character.Weapons;
 
-                    if (!weapons.HasWeapon(hash))
+            
+
+            cHWeapon.Shown += (sender, args) =>
+            {
+                cHWeapon.Clear();
+
+                WeaponHash heldWeaponHash = Game.Player.Character.Weapons.Current.Hash;
+
+                if (!WeaponValues.ContainsKey(heldWeaponHash))
+                {
+                    GTA.UI.Notification.Show("~y~You are not holding a supported weapon.");
+                    return;
+                }
+
+                int price = WeaponValues[heldWeaponHash];
+                string name = heldWeaponHash.ToString(); // Optional: use friendly name
+                var weapons = Game.Player.Character.Weapons;
+
+                // Create submenu for this weapon
+                var weaponMenu = new NativeMenu("", name, $"Manage your {name}");
+                pool.Add(weaponMenu);
+
+                // SELL
+                var sellItem = new NativeItem("Sell", $"Resell for ${price}");
+                sellItem.Activated += (s1, a1) =>
+                {
+                    if (!weapons.HasWeapon(heldWeaponHash))
                     {
                         GTA.UI.Notification.Show($"~r~You don't own the {name}.");
                         return;
                     }
 
-                    weapons.Select(hash, true); // Equip the weapon
+                    weapons.Remove(heldWeaponHash);
+                    Game.Player.Money += price;
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
-
-                    equipItem.Enabled = false;
-                    buyItem.Description = "~c~You already have this weapon equipped";
+                    GTA.UI.Notification.Show($"~g~Sold {name} for ${price}");
+                    sellItem.Enabled = false;
+                    sellItem.Description = "~c~You no longer own this weapon";
+            
                 };
 
-
+                // CUSTOMIZE
                 var customizeMenu = new NativeMenu(
                     "",
                     $"{name} Customization",
@@ -416,219 +455,58 @@ namespace moreammunation
                         "ammunation_banner"
                     )
                 );
-
                 pool.Add(customizeMenu);
 
-                customizeMenu.Shown += (s, e) =>
-                {
-                    if (!Game.Player.Character.Weapons.HasWeapon(hash))
-                    {
-                        customizeMenu.Visible = false;
-                        weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
-                    }
-                };
+                var openCompMenuItem = new NativeItem("Manage Attachments");
                 customizeMenu.Add(openCompMenuItem);
-                openCompMenuItem.Activated += (sender1, args1) =>
-                {
-                    var weapons = Game.Player.Character.Weapons;
 
-                    if (!weapons.HasWeapon(hash))
+                openCompMenuItem.Activated += (s2, a2) =>
+                {
+                    if (!weapons.HasWeapon(heldWeaponHash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show("~r~You don't own this weapon.");
                         return;
                     }
 
-                    var weapon = weapons[hash];
-
-                    // ✅ Clear and rebuild the menu only when weapon is owned
                     customizeMenu.Clear();
-                    customizeMenu.Items.Clear(); // Safe cleanup
 
-                    var otherComponents = new List<NativeItem>();
+                    var weapon = weapons[heldWeaponHash];
+                    var componentsList = new List<NativeItem>();
 
                     foreach (var component in weapon.Components)
                     {
-                        if (!customComponentHashes.Contains(component.ComponentHash))
+                        if (!chcustomComponentHashes.Contains(component.ComponentHash))
                             continue;
 
-                        string displayName = customComponentNames.TryGetValue(component.ComponentHash, out var nameo)
-                            ? nameo
+                        string compName = chcustomComponentNames.TryGetValue(component.ComponentHash, out var niceName)
+                            ? niceName
                             : component.ComponentHash.ToString();
 
-                        var compItem = new NativeItem(displayName);
-
-                        compItem.Activated += (sender2, args2) =>
+                        var compItem = new NativeItem(compName);
+                        compItem.Activated += (s3, a3) =>
                         {
                             component.Active = !component.Active;
 
-                            foreach (var item in otherComponents)
-                            {
-                                WeaponComponent matchingComponent = null;
 
-                                foreach (var comp in weapon.Components)
-                                {
-                                    if (customComponentNames.TryGetValue(comp.ComponentHash, out var compDisplayName))
-                                    {
-                                        if (compDisplayName == item.Title)
-                                        {
-                                            matchingComponent = comp;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                item.RightBadge = (matchingComponent != null && matchingComponent.Active)
-                                    ? CreateBadge()
-                                    : null;
-                            }
                         };
 
-                        otherComponents.Add(compItem);
+                        compItem.RightBadge = component.Active ? CreateBadge() : null;
+                        componentsList.Add(compItem);
                     }
 
-
-                    // Set initial badges
-                    foreach (var item in otherComponents)
-                    {
-                        WeaponComponent matchingComponent = null;
-
-                        foreach (var comp in weapon.Components)
-                        {
-                            if (customComponentNames.TryGetValue(comp.ComponentHash, out var compDisplayName))
-                            {
-                                if (compDisplayName == item.Title)
-                                {
-                                    matchingComponent = comp;
-                                    break;
-                                }
-                            }
-                        }
-
-                        item.RightBadge = (matchingComponent != null && matchingComponent.Active)
-                            ? CreateBadge()
-                            : null;
-                    }
-
-                    foreach (var item in otherComponents)
+                    foreach (var item in componentsList)
                         customizeMenu.Add(item);
 
                     customizeMenu.Visible = true;
                 };
-                buyItem.Activated += (s, a) =>
-                {
-                    var weapons = Game.Player.Character.Weapons;
 
-                    if (weapons.HasWeapon(hash))
-                    {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
-                        return;
-                    }
-
-                    if (Game.Player.Money < price)
-                    {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
-                        return;
-                    }
-
-                    Game.Player.Money -= price;
-                    weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
-
-
-                    equipItem.Enabled = false;
-
-                    buyItem.Enabled = false;
-                    buyItem.Description = "~c~You already own this weapon";
-
-                    sellItem.Enabled = true;
-                    sellItem.Description = $"Resell for ${price}";
-
-                    openCompMenuItem.Enabled = true;
-                    openCompMenuItem.Description = "Customize this weapon";
-                };
-                sellItem.Activated += (s, a) =>
-                {
-                    var weapons = Game.Player.Character.Weapons;
-
-                    if (!weapons.HasWeapon(hash))
-                    {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
-                        return;
-                    }
-
-                    weapons.Remove(hash);
-                    Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
-
-
-
-                    buyItem.Enabled = true;
-                    buyItem.Description = $"Price: ${price}";
-
-                    sellItem.Enabled = false;
-                    sellItem.Description = "~c~You do not own this weapon";
-
-                    equipItem.Enabled = false;
-                    buyItem.Description = "~c~You do not own this weapon";
-
-                    openCompMenuItem.Enabled = false;
-                    openCompMenuItem.Description = "~c~You must own this weapon to customize it";
-                };
-
-
-                weaponMenu.Add(equipItem);
-                weaponMenu.Add(buyItem);
                 weaponMenu.Add(sellItem);
                 weaponMenu.AddSubMenu(customizeMenu);
-                meleeSubMenu.AddSubMenu(weaponMenu);
-            }
+                cHWeapon.AddSubMenu(weaponMenu);
 
-            // Refresh buy/sell button states each time the menu is shown
-            meleeSubMenu.Shown += (sender, args) =>
-            {
-                var weapons = Game.Player.Character.Weapons;
-                foreach (var pair in meleeItems)
-                {
-                    WeaponHash hash = pair.Key;
-                    var buyItem = pair.Value;
-                    var sellItem = meleeSellItems[hash];
-                    int price = MeleeValues[hash];
-                    var openCompMenuItem = meleeAttachments[hash];
-                    var equipItem = meleeEquipItems[hash];
-
-                    if (weapons.HasWeapon(hash))
-                    {
-                        buyItem.Enabled = false;
-                        buyItem.Description = "~c~You already own this weapon";
-
-                        sellItem.Enabled = true;
-                        sellItem.Description = $"Resell for ${price}";
-
-                        equipItem.Enabled = true;
-                        equipItem.Description = "Equip this weapon";
-
-                        openCompMenuItem.Enabled = true;
-                        openCompMenuItem.Description = "Customize this weapon";
-                    }
-                    else
-                    {
-                        buyItem.Enabled = true;
-                        buyItem.Description = $"Price: ${price}";
-
-                        sellItem.Enabled = false;
-                        sellItem.Description = "~c~You do not own this weapon";
-
-                        equipItem.Enabled = false;
-                        equipItem.Description = "~c~You do not own this weapon";
-
-                        openCompMenuItem.Enabled = false;
-                        openCompMenuItem.Description = "~c~You must own this weapon to customize it";
-                    }
-                }
+                GTA.UI.Notification.Show($"~g~Currently holding: {name}");
             };
 
-            */
 
 
             var removeAllItem = new NativeItem("Sell All Weapons");
