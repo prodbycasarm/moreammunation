@@ -66,9 +66,9 @@
   </div>
 
   <div class="section">
-    <h2>License</h2>
-    <p>
-      This mod is provided as-is for personal use.<br>
-      Not affiliated with Rockstar Games.
-    </p>
+    <h2>Credits</h2>
+    <ul>
+      <li>Script by <strong>casarm</strong></li>
+      <li>Powered by <a href="https://github.com/LemonUIbyLemon/LemonUI">LemonUI</a> and <a href="https://github.com/crosire/scripthookvdotnet">ScriptHookVDotNet</a></li>
+    </ul>
   </div>
