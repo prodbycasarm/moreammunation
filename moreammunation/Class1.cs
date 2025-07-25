@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.Menu;
 
 
 namespace moreammunation
@@ -401,9 +402,6 @@ namespace moreammunation
             );
             pool.Add(cHWeapon);
             var cHWeaponItem = armoryMenu.AddSubMenu(cHWeapon);
-
-            
-
             cHWeapon.Shown += (sender, args) =>
             {
                 cHWeapon.Clear();
@@ -419,10 +417,6 @@ namespace moreammunation
                 int price = WeaponValues[heldWeaponHash];
                 string name = heldWeaponHash.ToString(); // Optional: use friendly name
                 var weapons = Game.Player.Character.Weapons;
-
-                // Create submenu for this weapon
-                var weaponMenu = new NativeMenu("", name, $"Manage your {name}");
-                pool.Add(weaponMenu);
 
                 // SELL
                 var sellItem = new NativeItem("Sell", $"Resell for ${price}");
@@ -456,55 +450,270 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                // START HERE
 
-                var openCompMenuItem = new NativeItem("Manage Attachments");
-                customizeMenu.Add(openCompMenuItem);
-
-                openCompMenuItem.Activated += (s2, a2) =>
+                customizeMenu.Shown += (s, e) =>
                 {
                     if (!weapons.HasWeapon(heldWeaponHash))
                     {
-                        GTA.UI.Notification.Show("~r~You don't own this weapon.");
+                        customizeMenu.Visible = false;
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
                         return;
                     }
 
-                    customizeMenu.Clear();
-
-                    var weapon = weapons[heldWeaponHash];
-                    var componentsList = new List<NativeItem>();
-
-                    foreach (var component in weapon.Components)
+                };
+                var excludedComponents = new HashSet<WeaponComponentHash>
                     {
-                        if (!chcustomComponentHashes.Contains(component.ComponentHash))
-                            continue;
+                        WeaponComponentHash.GunrunMk2Upgrade,
+                        // Pump Shotgun Mk2
+                        WeaponComponentHash.PumpShotgunMk2ClipExplosive,
+                        WeaponComponentHash.PumpShotgunMk2ClipHollowPoint,
+                        WeaponComponentHash.PumpShotgunMk2ClipIncendiary,
+                        WeaponComponentHash.PumpShotgunMk2ClipArmorPiercing,
 
-                        string compName = chcustomComponentNames.TryGetValue(component.ComponentHash, out var niceName)
-                            ? niceName
-                            : component.ComponentHash.ToString();
+                        // Revolver Mk2
+                        WeaponComponentHash.RevolverMk2ClipFMJ,
+                        WeaponComponentHash.RevolverMk2ClipHollowPoint,
+                        WeaponComponentHash.RevolverMk2ClipIncendiary,
+                        WeaponComponentHash.RevolverMk2ClipTracer,
 
-                        var compItem = new NativeItem(compName);
-                        compItem.Activated += (s3, a3) =>
-                        {
-                            component.Active = !component.Active;
+                        // SMG Mk2
+                        WeaponComponentHash.SMGMk2ClipFMJ,
+                        WeaponComponentHash.SMGMk2ClipHollowPoint,
+                        WeaponComponentHash.SMGMk2ClipIncendiary,
+                        WeaponComponentHash.SMGMk2ClipTracer,
 
+                        // SNS Pistol Mk2
+                        WeaponComponentHash.SNSPistolMk2ClipFMJ,
+                        WeaponComponentHash.SNSPistolMk2ClipHollowPoint,
+                        WeaponComponentHash.SNSPistolMk2ClipIncendiary,
+                        WeaponComponentHash.SNSPistolMk2ClipTracer,
 
-                        };
+                        // Assault Rifle Mk2
+                        WeaponComponentHash.AssaultRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.AssaultRifleMk2ClipFMJ,
+                        WeaponComponentHash.AssaultRifleMk2ClipIncendiary,
+                        WeaponComponentHash.AssaultRifleMk2ClipTracer,
 
-                        compItem.RightBadge = component.Active ? CreateBadge() : null;
-                        componentsList.Add(compItem);
-                    }
+                        // Bullpup Rifle Mk2
+                        WeaponComponentHash.BullpupRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.BullpupRifleMk2ClipFMJ,
+                        WeaponComponentHash.BullpupRifleMk2ClipIncendiary,
+                        WeaponComponentHash.BullpupRifleMk2ClipTracer,
 
-                    foreach (var item in componentsList)
-                        customizeMenu.Add(item);
+                        // Carbine Rifle Mk2
+                        WeaponComponentHash.CarbineRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.CarbineRifleMk2ClipFMJ,
+                        WeaponComponentHash.CarbineRifleMk2ClipIncendiary,
+                        WeaponComponentHash.CarbineRifleMk2ClipTracer,
 
-                    customizeMenu.Visible = true;
+                        // Combat MG Mk2
+                        WeaponComponentHash.CombatMGMk2ClipArmorPiercing,
+                        WeaponComponentHash.CombatMGMk2ClipFMJ,
+                        WeaponComponentHash.CombatMGMk2ClipIncendiary,
+                        WeaponComponentHash.CombatMGMk2ClipTracer,
+
+                        // Marksman Rifle Mk2
+                        WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
+                        WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                    };
+
+                // Check if it's a Mk2 weapon (simple detection based on name)
+                bool isMk2 = name.Contains("Mk2");
+
+                // Mk2 Tint Names
+                string[] mk2Tints =
+                {
+                    "Classic Black", "Classic Gray", "Classic Two-Tone", "Classic White", "Classic Beige", "Classic Green", "Classic Blue", "Classic Earth",
+                    "Classic Brown & Black", "Red Contrast", "Blue Contrast", "Yellow Contrast", "Orange Contrast", "Bold Pink", "Bold Purple & Yellow",
+                    "Bold Orange", "Bold Green & Purple", "Bold Red Features", "Bold Green Features", "Bold Cyan Features", "Bold Yellow Features",
+                    "Bold Red & White", "Bold Blue & White", "Metallic Gold", "Metallic Platinum", "Metallic Gray & Lilac", "Metallic Purple & Lime",
+                    "Metallic Red", "Metallic Green", "Metallic Blue", "Metallic White & Aqua", "Metallic Orange & Yellow", "Metallic Red and Yellow"
                 };
 
-                weaponMenu.Add(sellItem);
-                weaponMenu.AddSubMenu(customizeMenu);
-                cHWeapon.AddSubMenu(weaponMenu);
+                // Regular tint names for non-Mk2 weapons
+                string[] standardTints =
+                {
+                    "Default / Black", "Green", "Gold", "Pink", "Army", "LSPD", "Orange", "Platinum"
+                };
+
+                // Choose the right list
+                string[] tintOptions = isMk2 ? mk2Tints : standardTints;
+
+
+                //FINISH HERE
+                var openCompMenuItem = new NativeItem("Manage Attachments");
+
+                openCompMenuItem.Activated += (sender1, args1) =>
+                {
+                    var ped = Game.Player.Character;
+                    var weapon = ped.Weapons.Current;
+                    var wHash = weapon.Hash;
+
+                    customizeMenu.Clear();
+                    bool hasAny = false;
+
+                    var clipCheckboxes = new List<NativeCheckboxItem>();
+                    var otherComponents = new List<NativeCheckboxItem>();
+                    
+                    List<WeaponComponent> allComponents = new List<WeaponComponent>();
+                    for (int i = 0; i < weapon.Components.Count; i++)
+                    {
+                        var comp = weapon.Components[i];
+                        allComponents.Add(comp);
+                    }
+
+                    List<string> camos = new List<string>();
+                    List<string> camoSlides = new List<string>();
+
+                    for (int i = 0; i < allComponents.Count; i++)
+                    {
+                        var component = allComponents[i];
+
+                        string compName = component.ComponentHash.ToString()
+                            .Replace("WeaponComponentHash.", "")
+                            .Replace('_', ' ')
+                            .ToLower();
+
+                        if (excludedComponents.Contains(component.ComponentHash))
+                            continue;
+
+                        if (compName.Contains("camo") && compName.EndsWith("slide"))
+                        {
+                            camoSlides.Add(compName);
+                        }
+                        else if (compName.Contains("camo"))
+                        {
+                            camos.Add(compName);
+                        }
+                        else if (compName.Contains("clip"))
+                        {
+                            hasAny = true;
+                            var clipItem = new NativeCheckboxItem(compName, component.Active);
+
+                            clipItem.Activated += (s, e) =>
+                            {
+                                for (int j = 0; j < allComponents.Count; j++)
+                                {
+                                    var otherComp = allComponents[j];
+                                    string otherName = otherComp.ComponentHash.ToString()
+                                        .Replace("WeaponComponentHash.", "")
+                                        .Replace('_', ' ')
+                                        .ToLower();
+
+                                    if (otherName.Contains("clip"))
+                                        otherComp.Active = false;
+                                }
+
+                                component.Active = true;
+
+                                foreach (var checkbox in clipCheckboxes)
+                                    checkbox.Checked = (checkbox == clipItem);
+                            };
+
+                            clipCheckboxes.Add(clipItem);
+                        }
+                        else if (compName.Contains("muzzle") || compName.Contains("barrel") || compName.Contains("supp") || compName.Contains("comp") || compName.Contains("scope") || compName.Contains("sight"))
+                        {
+                            hasAny = true;
+                            var item = new NativeCheckboxItem(compName, component.Active);
+
+                            item.Activated += (s, e) =>
+                            {
+                                for (int j = 0; j < allComponents.Count; j++)
+                                {
+                                    var otherComp = allComponents[j];
+                                    string otherName = otherComp.ComponentHash.ToString()
+                                        .Replace("WeaponComponentHash.", "")
+                                        .Replace('_', ' ')
+                                        .ToLower();
+
+                                    if ((compName.Contains("muzzle") && otherName.Contains("muzzle")) ||
+                                        (compName.Contains("barrel") && otherName.Contains("barrel")) ||
+                                        ((compName.Contains("supp") || compName.Contains("comp")) &&
+                                         (otherName.Contains("supp") || otherName.Contains("comp"))) ||
+                                        ((compName.Contains("scope") || compName.Contains("sight")) &&
+                                         (otherName.Contains("scope") || otherName.Contains("sight"))))
+                                    {
+                                        otherComp.Active = false;
+                                    }
+                                }
+
+                                component.Active = true;
+
+                                foreach (var checkbox in otherComponents)
+                                {
+                                    if (checkbox.Title.ToLower().Contains("muzzle") == compName.Contains("muzzle") ||
+                                        checkbox.Title.ToLower().Contains("barrel") == compName.Contains("barrel") ||
+                                        (checkbox.Title.ToLower().Contains("supp") || checkbox.Title.ToLower().Contains("comp")) ==
+                                        (compName.Contains("supp") || compName.Contains("comp")) ||
+                                        (checkbox.Title.ToLower().Contains("scope") || checkbox.Title.ToLower().Contains("sight")) ==
+                                        (compName.Contains("scope") || compName.Contains("sight")))
+                                    {
+                                        checkbox.Checked = (checkbox == item);
+                                    }
+                                }
+                            };
+
+                            otherComponents.Add(item);
+                        }
+                        else
+                        {
+                            hasAny = true;
+                            var item = new NativeCheckboxItem(compName, component.Active);
+                            item.Activated += (s, e) => component.Active = !component.Active;
+                            otherComponents.Add(item);
+                        }
+                    }
+
+                    // Add clips
+                    for (int i = 0; i < clipCheckboxes.Count; i++)
+                        customizeMenu.Add(clipCheckboxes[i]);
+
+                    // Add other parts
+                    for (int i = 0; i < otherComponents.Count; i++)
+                        customizeMenu.Add(otherComponents[i]);
+
+                    // No customizations
+                    if (!hasAny && clipCheckboxes.Count == 0)
+                    {
+                        var noneItem = new NativeCheckboxItem("~c~No available customizations");
+                        noneItem.Enabled = false;
+                        customizeMenu.Add(noneItem);
+                    }
+
+                    // Weapon tint
+                    int currentTintIndex = Function.Call<int>(GTA.Native.Hash.GET_PED_WEAPON_TINT_INDEX, ped, (uint)wHash);
+
+                    if (currentTintIndex >= 0 && tintOptions.Length > 1)
+                    {
+                        var tintListItem = new NativeListItem<string>("Tint", tintOptions)
+                        {
+                            SelectedIndex = currentTintIndex
+                        };
+
+                        tintListItem.Activated += (senderTint, argsTint) =>
+                        {
+                            Function.Call(Hash.SET_PED_WEAPON_TINT_INDEX, ped, (uint)wHash, tintListItem.SelectedIndex);
+                        };
+
+                        customizeMenu.Add(tintListItem);
+                    }
+
+                    // You can re-add camo/camoSlide logic here with simple loops too if needed
+                };
+
+
+                customizeMenu.Add(openCompMenuItem);
+
+
+                cHWeapon.Add(sellItem);
+                cHWeapon.AddSubMenu(customizeMenu);
 
                 GTA.UI.Notification.Show($"~g~Currently holding: {name}");
+
             };
 
 
@@ -524,18 +733,6 @@ namespace moreammunation
                 selected.RightBadge = CreateBadge();  // Show on selected
                 other.RightBadge = null;             // Hide on other
             }
-
-
-            
-
-
-
-
-
-
-
-
-
 
 
             // Logic to check if player owns all weapons 
@@ -1252,18 +1449,18 @@ namespace moreammunation
                 // Mk2 Tint Names
                 string[] mk2Tints =
                 {
-    "Classic Black", "Classic Gray", "Classic Two-Tone", "Classic White", "Classic Beige", "Classic Green", "Classic Blue", "Classic Earth",
-    "Classic Brown & Black", "Red Contrast", "Blue Contrast", "Yellow Contrast", "Orange Contrast", "Bold Pink", "Bold Purple & Yellow",
-    "Bold Orange", "Bold Green & Purple", "Bold Red Features", "Bold Green Features", "Bold Cyan Features", "Bold Yellow Features",
-    "Bold Red & White", "Bold Blue & White", "Metallic Gold", "Metallic Platinum", "Metallic Gray & Lilac", "Metallic Purple & Lime",
-    "Metallic Red", "Metallic Green", "Metallic Blue", "Metallic White & Aqua", "Metallic Orange & Yellow", "Metallic Red and Yellow"
-};
+                    "Classic Black", "Classic Gray", "Classic Two-Tone", "Classic White", "Classic Beige", "Classic Green", "Classic Blue", "Classic Earth",
+                    "Classic Brown & Black", "Red Contrast", "Blue Contrast", "Yellow Contrast", "Orange Contrast", "Bold Pink", "Bold Purple & Yellow",
+                    "Bold Orange", "Bold Green & Purple", "Bold Red Features", "Bold Green Features", "Bold Cyan Features", "Bold Yellow Features",
+                    "Bold Red & White", "Bold Blue & White", "Metallic Gold", "Metallic Platinum", "Metallic Gray & Lilac", "Metallic Purple & Lime",
+                    "Metallic Red", "Metallic Green", "Metallic Blue", "Metallic White & Aqua", "Metallic Orange & Yellow", "Metallic Red and Yellow"
+                };
 
                 // Regular tint names for non-Mk2 weapons
                 string[] standardTints =
                 {
-    "Default / Black", "Green", "Gold", "Pink", "Army", "LSPD", "Orange", "Platinum"
-};
+                    "Default / Black", "Green", "Gold", "Pink", "Army", "LSPD", "Orange", "Platinum"
+                };
 
                 // Choose the right list
                 string[] tintOptions = isMk2 ? mk2Tints : standardTints;
