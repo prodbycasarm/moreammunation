@@ -418,6 +418,63 @@ namespace moreammunation
                 string name = heldWeaponHash.ToString(); // Optional: use friendly name
                 var weapons = Game.Player.Character.Weapons;
 
+                // Buy Ammo
+
+                var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
+                var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
+
+                // Buy 50 Rounds Logic
+                buyAmmoItem.Activated += (s, a) =>
+                {
+                    var cuweapons = Game.Player.Character.Weapons;
+                    var weapon = weapons[heldWeaponHash];
+
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        return;
+                    }
+
+                    int ammoPrice = 70;
+                    int ammoAmount = 50;
+
+                    if (Game.Player.Money < ammoPrice)
+                    {
+                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        return;
+                    }
+
+                    Game.Player.Money -= ammoPrice;
+                    weapon.Ammo += ammoAmount;
+
+                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                };
+                // Full Refill Logic
+                buyFullAmmoItem.Activated += (s, a) =>
+                {
+                    var cuweapons = Game.Player.Character.Weapons;
+                    var weapon = weapons[heldWeaponHash];
+
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        return;
+                    }
+
+                    int refillPrice = 5000;
+
+                    if (Game.Player.Money < refillPrice)
+                    {
+                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        return;
+                    }
+
+                    Game.Player.Money -= refillPrice;
+                    weapon.Ammo = weapon.MaxAmmo;
+
+                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                };
+
                 // SELL
                 var sellItem = new NativeItem("Sell", $"Resell for ${price}");
                 sellItem.Activated += (s1, a1) =>
@@ -465,6 +522,17 @@ namespace moreammunation
                 var excludedComponents = new HashSet<WeaponComponentHash>
                     {
                         WeaponComponentHash.GunrunMk2Upgrade,
+                        
+                        
+                        
+                        
+                        // Pistol Mk2
+                        WeaponComponentHash.PistolMk2ClipHollowPoint,
+                        WeaponComponentHash.PistolMk2ClipIncendiary,
+                        WeaponComponentHash.PistolMk2ClipTracer,
+                        WeaponComponentHash.PistolMk2ClipFMJ,
+                        WeaponComponentHash.GunrunMk2Upgrade,
+                        
                         // Pump Shotgun Mk2
                         WeaponComponentHash.PumpShotgunMk2ClipExplosive,
                         WeaponComponentHash.PumpShotgunMk2ClipHollowPoint,
@@ -517,7 +585,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
@@ -709,6 +783,8 @@ namespace moreammunation
                 customizeMenu.Add(openCompMenuItem);
 
 
+                cHWeapon.Add(buyFullAmmoItem);
+                cHWeapon.Add(buyAmmoItem);
                 cHWeapon.Add(sellItem);
                 cHWeapon.AddSubMenu(customizeMenu);
 
@@ -2152,6 +2228,14 @@ namespace moreammunation
                 var excludedComponents = new HashSet<WeaponComponentHash>
                     {
                         WeaponComponentHash.GunrunMk2Upgrade,
+                        // Pistol Mk2
+                        WeaponComponentHash.PistolMk2ClipHollowPoint,
+                        WeaponComponentHash.PistolMk2ClipIncendiary,
+                        WeaponComponentHash.PistolMk2ClipTracer,
+                        WeaponComponentHash.PistolMk2ClipFMJ,
+                        WeaponComponentHash.GunrunMk2Upgrade,
+
+                        
                         // Pump Shotgun Mk2
                         WeaponComponentHash.PumpShotgunMk2ClipExplosive,
                         WeaponComponentHash.PumpShotgunMk2ClipHollowPoint,
@@ -2204,7 +2288,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
@@ -5317,7 +5407,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
@@ -6086,7 +6182,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
