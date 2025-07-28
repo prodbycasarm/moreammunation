@@ -1214,7 +1214,7 @@ namespace moreammunation
                     }
                 }
             };
-            // Dictionary to track buy buttons
+
             Dictionary<WeaponHash, NativeItem> handgunsItems = new Dictionary<WeaponHash, NativeItem>();
             // Dictionary to track sell buttons
             Dictionary<WeaponHash, NativeItem> handgunsSellItems = new Dictionary<WeaponHash, NativeItem>();
