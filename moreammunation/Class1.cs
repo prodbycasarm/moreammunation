@@ -7075,7 +7075,7 @@ namespace moreammunation
             }
         }
 
-        //Fix Bug where UI doesnt update after removing weapons
+        //Fix Bug where UI doesnt update after removing weapons 
 
 
         private void RemoveWeapons()
