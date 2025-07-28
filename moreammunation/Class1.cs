@@ -823,7 +823,7 @@ namespace moreammunation
             }
             bool HasNoWeapons()
             {
-                foreach (var kv in MeleeValues)
+                foreach (var kv in WeaponValues)
                 {
                     if (Game.Player.Character.Weapons.HasWeapon(kv.Key))
                         return false;
@@ -856,11 +856,9 @@ namespace moreammunation
 
                     return;
                 }
-
                 UpdateBadges(giveAllItem, removeAllItem);
+
                 BuyAllWeapons();
-
-
 
                 // Disable Buy All if everything is now owned
                 if (HasAllWeapons())
@@ -868,27 +866,19 @@ namespace moreammunation
                     giveAllItem.Enabled = false;
 
                 }
-
                 // Re-enable Sell All
                 removeAllItem.Enabled = true;
-
             };
             void RefreshBuySellItems()
             {
                 bool hasAll = HasAllWeapons();
                 bool hasNone = HasNoWeapons();
-
                 giveAllItem.RightBadge = null;
                 removeAllItem.RightBadge = null;
                 // Update Buy All
                 giveAllItem.Enabled = !hasAll;
-
-
                 // Update Sell All
                 removeAllItem.Enabled = !hasNone;
-
-
-
             }
             // Update badges based on current state
             armoryMenu.Shown += (sender, args) =>
@@ -901,8 +891,6 @@ namespace moreammunation
 
 
             //MELEE SECTION
-
-
             // Dictionary for melees
             Dictionary<WeaponHash, NativeItem> meleeItems = new Dictionary<WeaponHash, NativeItem>();
             Dictionary<WeaponHash, NativeItem> meleeSellItems = new Dictionary<WeaponHash, NativeItem>();
@@ -946,9 +934,6 @@ namespace moreammunation
 
 
                 };
-
-
-
             // Create Melee submenu
             meleeSubMenu = new NativeMenu(
                 "",
@@ -1003,8 +988,6 @@ namespace moreammunation
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equipped";
                 };
-
-
                 var customizeMenu = new NativeMenu(
                     "",
                     $"{name} Customization",
@@ -1016,9 +999,7 @@ namespace moreammunation
                         "ammunation_banner"
                     )
                 );
-
                 pool.Add(customizeMenu);
-
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
@@ -1175,15 +1156,12 @@ namespace moreammunation
                     openCompMenuItem.Enabled = false;
                     openCompMenuItem.Description = "~c~You must own this weapon to customize it";
                 };
-
-
                 weaponMenu.Add(equipItem);
                 weaponMenu.Add(buyItem);
                 weaponMenu.Add(sellItem);
                 weaponMenu.AddSubMenu(customizeMenu);
                 meleeSubMenu.AddSubMenu(weaponMenu);
             }
-
             // Refresh buy/sell button states each time the menu is shown
             meleeSubMenu.Shown += (sender, args) =>
             {
@@ -1227,18 +1205,7 @@ namespace moreammunation
                     }
                 }
             };
-
-
-
-
-
-
-
-
-
-
-
-            // Dictionary to track buy buttons
+             // Dictionary to track buy buttons
             Dictionary<WeaponHash, NativeItem> handgunsItems = new Dictionary<WeaponHash, NativeItem>();
             // Dictionary to track sell buttons
             Dictionary<WeaponHash, NativeItem> handgunsSellItems = new Dictionary<WeaponHash, NativeItem>();
@@ -1321,7 +1288,6 @@ namespace moreammunation
                         GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
                         return;
                     }
-
                     int ammoPrice = 70;
                     int ammoAmount = 50;
 
@@ -1348,7 +1314,6 @@ namespace moreammunation
                         GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
                         return;
                     }
-
                     int refillPrice = 5000;
 
                     if (Game.Player.Money < refillPrice)
@@ -6776,8 +6741,8 @@ namespace moreammunation
                         return;
                     }
 
-                    int ammoPrice = 70;
-                    int ammoAmount = 50;
+                    int ammoPrice = 50;
+                    int ammoAmount = 1;
 
                     if (Game.Player.Money < ammoPrice)
                     {
@@ -6803,7 +6768,7 @@ namespace moreammunation
                         return;
                     }
 
-                    int refillPrice = 5000;
+                    int refillPrice = 3000;
 
                     if (Game.Player.Money < refillPrice)
                     {
@@ -7072,6 +7037,10 @@ namespace moreammunation
                 GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
             }
         }
+
+        //Fix Bug where UI doesnt update after removing weapons
+
+
         private void RemoveWeapons()
         {
             Ped player = Game.Player.Character;
@@ -7079,8 +7048,8 @@ namespace moreammunation
 
             try
             {
-                // Detect if the player has any weapon at all
                 bool hasWeapons = false;
+
                 foreach (Weapon weapon in weapons)
                 {
                     if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
@@ -7098,20 +7067,39 @@ namespace moreammunation
 
                 int totalValue = 0;
 
-                foreach (Weapon weapon in weapons)
+                foreach (Weapon weapon in weapons.ToList())
                 {
-                    if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
+                    WeaponHash hash = weapon.Hash;
+
+                    if (hash != WeaponHash.Unarmed && weapon.IsPresent)
                     {
-                        int value = WeaponValues.TryGetValue(weapon.Hash, out int v) ? v : 100;
+                        int value = WeaponValues.TryGetValue(hash, out int v) ? v : 100;
                         totalValue += value;
+
+                        weapons.Remove(hash);
+
+                        // ✅ UI Cleanup
+                        if (weaponUIs.TryGetValue(hash, out var ui))
+                        {
+                            ui.SellItem.Enabled = false;
+                            ui.SellItem.Description = "~c~You do not own this weapon";
+
+                            ui.BuyItem.Enabled = true;
+                            ui.BuyItem.Description = $"Price: ${value}";
+
+                            ui.EquipItem.Enabled = false;
+
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyAmmoItem);
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyFullAmmoItem);
+                        }
                     }
                 }
 
-                // Add money
                 Game.Player.Money += totalValue;
+                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
 
-                // Remove all weapons
-                Function.Call(Hash.REMOVE_ALL_PED_WEAPONS, player, true);
             }
             catch (Exception ex)
             {
