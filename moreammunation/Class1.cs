@@ -8,15 +8,25 @@ using LemonUI.Menus;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.Menu;
 
 
 namespace moreammunation
 {
+    public class WeaponUI
+    {
+        public NativeItem BuyItem;
+        public NativeItem SellItem;
+        public NativeItem EquipItem;
+        public NativeItem BuyAmmoItem;
+        public NativeItem BuyFullAmmoItem;
+        public NativeMenu WeaponMenu;
+    }
     public class Main : Script
     {
         //Dictionary For Weapons
-
         public Dictionary<WeaponHash, int> WeaponValues = new Dictionary<WeaponHash, int>
         {
             // Melee
@@ -288,6 +298,7 @@ namespace moreammunation
             { WeaponHash.AcidPackage, 50 }
         };
 
+        Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
 
         private bool isNearArmoryZone = false;
         private List<Vector3> armoryZonePositions = new List<Vector3>();
@@ -295,6 +306,7 @@ namespace moreammunation
         private List<Blip> armoryZoneBlips = new List<Blip>();
         private ObjectPool pool;
         private NativeMenu armoryMenu;
+        private NativeMenu cHWeapon;
         private NativeMenu meleeSubMenu;
         private NativeMenu handgunsSubMenu;
         private NativeMenu smgSubMenu;
@@ -346,6 +358,451 @@ namespace moreammunation
                 )
             );
             pool.Add(armoryMenu);
+            Dictionary<WeaponComponentHash, string> chcustomComponentNames = new Dictionary<WeaponComponentHash, string>
+                {
+                    {(WeaponComponentHash)4007263587u, "Knuckle Varmod Ballas"},
+                    {(WeaponComponentHash)4081463091u, "Knuckle Varmod Base"},
+                    {(WeaponComponentHash)2539772380u, "Knuckle Varmod Diamond"},
+                    {(WeaponComponentHash)1351683121u, "Knuckle Varmod Dollar"},
+                    {(WeaponComponentHash)2112683568u, "Knuckle Varmod Hate"},
+                    {(WeaponComponentHash)3800804335u, "Knuckle Varmod King"},
+                    {(WeaponComponentHash)1062111910u, "Knuckle Varmod Love"},
+                    {(WeaponComponentHash)3323197061u, "Knuckle Varmod Pimp"},
+                    {(WeaponComponentHash)146278587u,  "Knuckle Varmod Player"},
+                    {(WeaponComponentHash)2062808965u, "Knuckle Varmod Vagos"},
+                    {(WeaponComponentHash)2436343040u, "Switchblade Varmod Base"},
+                    {(WeaponComponentHash)1530822070u, "Switchblade Varmod Var1"},
+                    {(WeaponComponentHash)3885209186u, "Switchblade Varmod Var2"},
+                    {(WeaponComponentHash)3372082259u, "Green Version"},
+                    {(WeaponComponentHash)3014965697u, "Orange Version"}
+                };
+            List<WeaponComponentHash> chcustomComponentHashes = new List<WeaponComponentHash>
+                {
+                    (WeaponComponentHash)4007263587u, // KnuckleVarmodBallas
+                    (WeaponComponentHash)4081463091u, // KnuckleVarmodBase
+                    (WeaponComponentHash)2539772380u, // KnuckleVarmodDiamond
+                    (WeaponComponentHash)1351683121u, // KnuckleVarmodDollar
+                    (WeaponComponentHash)2112683568u, // KnuckleVarmodHate
+                    (WeaponComponentHash)3800804335u, // KnuckleVarmodKing
+                    (WeaponComponentHash)1062111910u, // KnuckleVarmodLove
+                    (WeaponComponentHash)3323197061u, // KnuckleVarmodPimp
+                    (WeaponComponentHash)146278587u,  // KnuckleVarmodPlayer
+                    (WeaponComponentHash)2062808965u, // KnuckleVarmodVagos
+                    (WeaponComponentHash)2436343040u, // SwitchbladeVarmodBase
+                    (WeaponComponentHash)1530822070u, // SwitchbladeVarmodVar1
+                    (WeaponComponentHash)3885209186u, // SwitchbladeVarmodVar2
+                    (WeaponComponentHash)3372082259u, // Example switchblade ID you gave
+                    (WeaponComponentHash)3014965697u  // Another ID you gave
+
+
+                };
+
+            // Currently Held Weapon logic
+            cHWeapon = new NativeMenu(
+                "",
+                "Currently Held Weapon",
+                "Customize or sell the weapon you’re currently holding.",
+                new ScaledTexture(
+                    PointF.Empty,
+                    new SizeF(431, 107),
+                    "thumbnail_ammunation_net",
+                    "ammunation_banner"
+                )
+            );
+            pool.Add(cHWeapon);
+            var cHWeaponItem = armoryMenu.AddSubMenu(cHWeapon);
+            cHWeapon.Shown += (sender, args) =>
+            {
+                cHWeapon.Clear();
+
+                WeaponHash heldWeaponHash = Game.Player.Character.Weapons.Current.Hash;
+
+                if (!WeaponValues.ContainsKey(heldWeaponHash))
+                {
+                    GTA.UI.Notification.Show("~y~You are not holding a supported weapon.");
+                    return;
+                }
+
+                int price = WeaponValues[heldWeaponHash];
+                string name = heldWeaponHash.ToString(); // Optional: use friendly name
+                var weapons = Game.Player.Character.Weapons;
+
+                // Buy Ammo
+
+                var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
+                var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
+
+                // Buy 50 Rounds Logic
+                buyAmmoItem.Activated += (s, a) =>
+                {
+                    var cuweapons = Game.Player.Character.Weapons;
+                    var weapon = weapons[heldWeaponHash];
+
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        return;
+                    }
+
+                    int ammoPrice = 70;
+                    int ammoAmount = 50;
+
+                    if (Game.Player.Money < ammoPrice)
+                    {
+                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        return;
+                    }
+
+                    Game.Player.Money -= ammoPrice;
+                    weapon.Ammo += ammoAmount;
+
+                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                };
+                // Full Refill Logic
+                buyFullAmmoItem.Activated += (s, a) =>
+                {
+                    var cuweapons = Game.Player.Character.Weapons;
+                    var weapon = weapons[heldWeaponHash];
+
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        return;
+                    }
+
+                    int refillPrice = 5000;
+
+                    if (Game.Player.Money < refillPrice)
+                    {
+                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        return;
+                    }
+
+                    Game.Player.Money -= refillPrice;
+                    weapon.Ammo = weapon.MaxAmmo;
+
+                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                };
+
+                // SELL
+                var sellItem = new NativeItem("Sell", $"Resell for ${price}");
+                sellItem.Activated += (s1, a1) =>
+                {
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        return;
+                    }
+
+                    weapons.Remove(heldWeaponHash);
+                    Game.Player.Money += price;
+
+                    GTA.UI.Notification.Show($"~g~Sold {name} for ${price}");
+                    sellItem.Enabled = false;
+                    sellItem.Description = "~c~You no longer own this weapon";
+
+                };
+
+                // CUSTOMIZE
+                var customizeMenu = new NativeMenu(
+                    "",
+                    $"{name} Customization",
+                    $"Customize your {name}",
+                    new ScaledTexture(
+                        PointF.Empty,
+                        new SizeF(431, 107),
+                        "thumbnail_ammunation_net",
+                        "ammunation_banner"
+                    )
+                );
+                pool.Add(customizeMenu);
+                // START HERE
+
+                customizeMenu.Shown += (s, e) =>
+                {
+                    if (!weapons.HasWeapon(heldWeaponHash))
+                    {
+                        customizeMenu.Visible = false;
+                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        return;
+                    }
+
+                };
+                var excludedComponents = new HashSet<WeaponComponentHash>
+                    {
+                        WeaponComponentHash.GunrunMk2Upgrade,
+                        
+                        
+                        
+                        
+                        // Pistol Mk2
+                        WeaponComponentHash.PistolMk2ClipHollowPoint,
+                        WeaponComponentHash.PistolMk2ClipIncendiary,
+                        WeaponComponentHash.PistolMk2ClipTracer,
+                        WeaponComponentHash.PistolMk2ClipFMJ,
+                        WeaponComponentHash.GunrunMk2Upgrade,
+                        
+                        // Pump Shotgun Mk2
+                        WeaponComponentHash.PumpShotgunMk2ClipExplosive,
+                        WeaponComponentHash.PumpShotgunMk2ClipHollowPoint,
+                        WeaponComponentHash.PumpShotgunMk2ClipIncendiary,
+                        WeaponComponentHash.PumpShotgunMk2ClipArmorPiercing,
+
+                        // Revolver Mk2
+                        WeaponComponentHash.RevolverMk2ClipFMJ,
+                        WeaponComponentHash.RevolverMk2ClipHollowPoint,
+                        WeaponComponentHash.RevolverMk2ClipIncendiary,
+                        WeaponComponentHash.RevolverMk2ClipTracer,
+
+                        // SMG Mk2
+                        WeaponComponentHash.SMGMk2ClipFMJ,
+                        WeaponComponentHash.SMGMk2ClipHollowPoint,
+                        WeaponComponentHash.SMGMk2ClipIncendiary,
+                        WeaponComponentHash.SMGMk2ClipTracer,
+
+                        // SNS Pistol Mk2
+                        WeaponComponentHash.SNSPistolMk2ClipFMJ,
+                        WeaponComponentHash.SNSPistolMk2ClipHollowPoint,
+                        WeaponComponentHash.SNSPistolMk2ClipIncendiary,
+                        WeaponComponentHash.SNSPistolMk2ClipTracer,
+
+                        // Assault Rifle Mk2
+                        WeaponComponentHash.AssaultRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.AssaultRifleMk2ClipFMJ,
+                        WeaponComponentHash.AssaultRifleMk2ClipIncendiary,
+                        WeaponComponentHash.AssaultRifleMk2ClipTracer,
+
+                        // Bullpup Rifle Mk2
+                        WeaponComponentHash.BullpupRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.BullpupRifleMk2ClipFMJ,
+                        WeaponComponentHash.BullpupRifleMk2ClipIncendiary,
+                        WeaponComponentHash.BullpupRifleMk2ClipTracer,
+
+                        // Carbine Rifle Mk2
+                        WeaponComponentHash.CarbineRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.CarbineRifleMk2ClipFMJ,
+                        WeaponComponentHash.CarbineRifleMk2ClipIncendiary,
+                        WeaponComponentHash.CarbineRifleMk2ClipTracer,
+
+                        // Combat MG Mk2
+                        WeaponComponentHash.CombatMGMk2ClipArmorPiercing,
+                        WeaponComponentHash.CombatMGMk2ClipFMJ,
+                        WeaponComponentHash.CombatMGMk2ClipIncendiary,
+                        WeaponComponentHash.CombatMGMk2ClipTracer,
+
+                        // Marksman Rifle Mk2
+                        WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
+                        WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
+                        WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
+                    };
+
+                // Check if it's a Mk2 weapon (simple detection based on name)
+                bool isMk2 = name.Contains("Mk2");
+
+                // Mk2 Tint Names
+                string[] mk2Tints =
+                {
+                    "Classic Black", "Classic Gray", "Classic Two-Tone", "Classic White", "Classic Beige", "Classic Green", "Classic Blue", "Classic Earth",
+                    "Classic Brown & Black", "Red Contrast", "Blue Contrast", "Yellow Contrast", "Orange Contrast", "Bold Pink", "Bold Purple & Yellow",
+                    "Bold Orange", "Bold Green & Purple", "Bold Red Features", "Bold Green Features", "Bold Cyan Features", "Bold Yellow Features",
+                    "Bold Red & White", "Bold Blue & White", "Metallic Gold", "Metallic Platinum", "Metallic Gray & Lilac", "Metallic Purple & Lime",
+                    "Metallic Red", "Metallic Green", "Metallic Blue", "Metallic White & Aqua", "Metallic Orange & Yellow", "Metallic Red and Yellow"
+                };
+
+                // Regular tint names for non-Mk2 weapons
+                string[] standardTints =
+                {
+                    "Default / Black", "Green", "Gold", "Pink", "Army", "LSPD", "Orange", "Platinum"
+                };
+
+                // Choose the right list
+                string[] tintOptions = isMk2 ? mk2Tints : standardTints;
+
+
+                //FINISH HERE
+                var openCompMenuItem = new NativeItem("Manage Attachments");
+
+                openCompMenuItem.Activated += (sender1, args1) =>
+                {
+                    var ped = Game.Player.Character;
+                    var weapon = ped.Weapons.Current;
+                    var wHash = weapon.Hash;
+
+                    customizeMenu.Clear();
+                    bool hasAny = false;
+
+                    var clipCheckboxes = new List<NativeCheckboxItem>();
+                    var otherComponents = new List<NativeCheckboxItem>();
+
+                    List<WeaponComponent> allComponents = new List<WeaponComponent>();
+                    for (int i = 0; i < weapon.Components.Count; i++)
+                    {
+                        var comp = weapon.Components[i];
+                        allComponents.Add(comp);
+                    }
+
+                    List<string> camos = new List<string>();
+                    List<string> camoSlides = new List<string>();
+
+                    for (int i = 0; i < allComponents.Count; i++)
+                    {
+                        var component = allComponents[i];
+
+                        string compName = component.ComponentHash.ToString()
+                            .Replace("WeaponComponentHash.", "")
+                            .Replace('_', ' ')
+                            .ToLower();
+
+                        if (excludedComponents.Contains(component.ComponentHash))
+                            continue;
+
+                        if (compName.Contains("camo") && compName.EndsWith("slide"))
+                        {
+                            camoSlides.Add(compName);
+                        }
+                        else if (compName.Contains("camo"))
+                        {
+                            camos.Add(compName);
+                        }
+                        else if (compName.Contains("clip"))
+                        {
+                            hasAny = true;
+                            var clipItem = new NativeCheckboxItem(compName, component.Active);
+
+                            clipItem.Activated += (s, e) =>
+                            {
+                                for (int j = 0; j < allComponents.Count; j++)
+                                {
+                                    var otherComp = allComponents[j];
+                                    string otherName = otherComp.ComponentHash.ToString()
+                                        .Replace("WeaponComponentHash.", "")
+                                        .Replace('_', ' ')
+                                        .ToLower();
+
+                                    if (otherName.Contains("clip"))
+                                        otherComp.Active = false;
+                                }
+
+                                component.Active = true;
+
+                                foreach (var checkbox in clipCheckboxes)
+                                    checkbox.Checked = (checkbox == clipItem);
+                            };
+
+                            clipCheckboxes.Add(clipItem);
+                        }
+                        else if (compName.Contains("muzzle") || compName.Contains("barrel") || compName.Contains("supp") || compName.Contains("comp") || compName.Contains("scope") || compName.Contains("sight"))
+                        {
+                            hasAny = true;
+                            var item = new NativeCheckboxItem(compName, component.Active);
+
+                            item.Activated += (s, e) =>
+                            {
+                                for (int j = 0; j < allComponents.Count; j++)
+                                {
+                                    var otherComp = allComponents[j];
+                                    string otherName = otherComp.ComponentHash.ToString()
+                                        .Replace("WeaponComponentHash.", "")
+                                        .Replace('_', ' ')
+                                        .ToLower();
+
+                                    if ((compName.Contains("muzzle") && otherName.Contains("muzzle")) ||
+                                        (compName.Contains("barrel") && otherName.Contains("barrel")) ||
+                                        ((compName.Contains("supp") || compName.Contains("comp")) &&
+                                         (otherName.Contains("supp") || otherName.Contains("comp"))) ||
+                                        ((compName.Contains("scope") || compName.Contains("sight")) &&
+                                         (otherName.Contains("scope") || otherName.Contains("sight"))))
+                                    {
+                                        otherComp.Active = false;
+                                    }
+                                }
+
+                                component.Active = true;
+
+                                foreach (var checkbox in otherComponents)
+                                {
+                                    if (checkbox.Title.ToLower().Contains("muzzle") == compName.Contains("muzzle") ||
+                                        checkbox.Title.ToLower().Contains("barrel") == compName.Contains("barrel") ||
+                                        (checkbox.Title.ToLower().Contains("supp") || checkbox.Title.ToLower().Contains("comp")) ==
+                                        (compName.Contains("supp") || compName.Contains("comp")) ||
+                                        (checkbox.Title.ToLower().Contains("scope") || checkbox.Title.ToLower().Contains("sight")) ==
+                                        (compName.Contains("scope") || compName.Contains("sight")))
+                                    {
+                                        checkbox.Checked = (checkbox == item);
+                                    }
+                                }
+                            };
+
+                            otherComponents.Add(item);
+                        }
+                        else
+                        {
+                            hasAny = true;
+                            var item = new NativeCheckboxItem(compName, component.Active);
+                            item.Activated += (s, e) => component.Active = !component.Active;
+                            otherComponents.Add(item);
+                        }
+                    }
+
+                    // Add clips
+                    for (int i = 0; i < clipCheckboxes.Count; i++)
+                        customizeMenu.Add(clipCheckboxes[i]);
+
+                    // Add other parts
+                    for (int i = 0; i < otherComponents.Count; i++)
+                        customizeMenu.Add(otherComponents[i]);
+
+                    // No customizations
+                    if (!hasAny && clipCheckboxes.Count == 0)
+                    {
+                        var noneItem = new NativeCheckboxItem("~c~No available customizations");
+                        noneItem.Enabled = false;
+                        customizeMenu.Add(noneItem);
+                    }
+
+                    // Weapon tint
+                    int currentTintIndex = Function.Call<int>(GTA.Native.Hash.GET_PED_WEAPON_TINT_INDEX, ped, (uint)wHash);
+
+                    if (currentTintIndex >= 0 && tintOptions.Length > 1)
+                    {
+                        var tintListItem = new NativeListItem<string>("Tint", tintOptions)
+                        {
+                            SelectedIndex = currentTintIndex
+                        };
+
+                        tintListItem.Activated += (senderTint, argsTint) =>
+                        {
+                            Function.Call(Hash.SET_PED_WEAPON_TINT_INDEX, ped, (uint)wHash, tintListItem.SelectedIndex);
+                        };
+
+                        customizeMenu.Add(tintListItem);
+                    }
+
+                    // You can re-add camo/camoSlide logic here with simple loops too if needed
+                };
+
+
+                customizeMenu.Add(openCompMenuItem);
+
+
+                cHWeapon.Add(buyFullAmmoItem);
+                cHWeapon.Add(buyAmmoItem);
+                cHWeapon.Add(sellItem);
+                cHWeapon.AddSubMenu(customizeMenu);
+
+                GTA.UI.Notification.Show($"~g~Currently holding: {name}");
+
+            };
+
+
+
             var removeAllItem = new NativeItem("Sell All Weapons");
             var giveAllItem = new NativeItem("Buy All Weapons");
             // Badge creator
@@ -361,6 +818,8 @@ namespace moreammunation
                 selected.RightBadge = CreateBadge();  // Show on selected
                 other.RightBadge = null;             // Hide on other
             }
+
+
             // Logic to check if player owns all weapons 
             bool HasAllWeapons()
             {
@@ -373,7 +832,7 @@ namespace moreammunation
             }
             bool HasNoWeapons()
             {
-                foreach (var kv in MeleeValues)
+                foreach (var kv in WeaponValues)
                 {
                     if (Game.Player.Character.Weapons.HasWeapon(kv.Key))
                         return false;
@@ -406,11 +865,9 @@ namespace moreammunation
 
                     return;
                 }
-
                 UpdateBadges(giveAllItem, removeAllItem);
+
                 BuyAllWeapons();
-
-
 
                 // Disable Buy All if everything is now owned
                 if (HasAllWeapons())
@@ -418,34 +875,31 @@ namespace moreammunation
                     giveAllItem.Enabled = false;
 
                 }
-
                 // Re-enable Sell All
                 removeAllItem.Enabled = true;
-
             };
             void RefreshBuySellItems()
             {
                 bool hasAll = HasAllWeapons();
                 bool hasNone = HasNoWeapons();
-
+                giveAllItem.RightBadge = null;
+                removeAllItem.RightBadge = null;
                 // Update Buy All
                 giveAllItem.Enabled = !hasAll;
-
-
                 // Update Sell All
                 removeAllItem.Enabled = !hasNone;
-
-
-
             }
+            // Update badges based on current state
+            armoryMenu.Shown += (sender, args) =>
+            {
+                RefreshBuySellItems();
+            };
             armoryMenu.Add(removeAllItem);
             armoryMenu.Add(giveAllItem);
             RefreshBuySellItems();
 
 
             //MELEE SECTION
-
-
             // Dictionary for melees
             Dictionary<WeaponHash, NativeItem> meleeItems = new Dictionary<WeaponHash, NativeItem>();
             Dictionary<WeaponHash, NativeItem> meleeSellItems = new Dictionary<WeaponHash, NativeItem>();
@@ -489,8 +943,6 @@ namespace moreammunation
 
 
                 };
-
-
             // Create Melee submenu
             meleeSubMenu = new NativeMenu(
                 "",
@@ -545,8 +997,6 @@ namespace moreammunation
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equipped";
                 };
-
-
                 var customizeMenu = new NativeMenu(
                     "",
                     $"{name} Customization",
@@ -558,9 +1008,7 @@ namespace moreammunation
                         "ammunation_banner"
                     )
                 );
-
                 pool.Add(customizeMenu);
-
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
@@ -717,15 +1165,12 @@ namespace moreammunation
                     openCompMenuItem.Enabled = false;
                     openCompMenuItem.Description = "~c~You must own this weapon to customize it";
                 };
-
-
                 weaponMenu.Add(equipItem);
                 weaponMenu.Add(buyItem);
                 weaponMenu.Add(sellItem);
                 weaponMenu.AddSubMenu(customizeMenu);
                 meleeSubMenu.AddSubMenu(weaponMenu);
             }
-
             // Refresh buy/sell button states each time the menu is shown
             meleeSubMenu.Shown += (sender, args) =>
             {
@@ -769,17 +1214,6 @@ namespace moreammunation
                     }
                 }
             };
-
-
-
-
-
-
-
-
-
-
-
             // Dictionary to track buy buttons
             Dictionary<WeaponHash, NativeItem> handgunsItems = new Dictionary<WeaponHash, NativeItem>();
             // Dictionary to track sell buttons
@@ -832,6 +1266,15 @@ namespace moreammunation
                 handgunsItems[hash] = buyItem;
                 handgunsSellItems[hash] = sellItem;
 
+                weaponUIs[hash] = new WeaponUI
+                {
+                    BuyItem = buyItem,
+                    SellItem = sellItem,
+                    EquipItem = equipItem,
+                    BuyAmmoItem = buyAmmoItem,
+                    BuyFullAmmoItem = buyFullAmmoItem,
+                    WeaponMenu = weaponMenu
+                };
 
                 equipItem.Activated += (s, a) =>
                 {
@@ -863,7 +1306,6 @@ namespace moreammunation
                         GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
                         return;
                     }
-
                     int ammoPrice = 70;
                     int ammoAmount = 50;
 
@@ -890,7 +1332,6 @@ namespace moreammunation
                         GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
                         return;
                     }
-
                     int refillPrice = 5000;
 
                     if (Game.Player.Money < refillPrice)
@@ -1067,18 +1508,18 @@ namespace moreammunation
                 // Mk2 Tint Names
                 string[] mk2Tints =
                 {
-    "Classic Black", "Classic Gray", "Classic Two-Tone", "Classic White", "Classic Beige", "Classic Green", "Classic Blue", "Classic Earth",
-    "Classic Brown & Black", "Red Contrast", "Blue Contrast", "Yellow Contrast", "Orange Contrast", "Bold Pink", "Bold Purple & Yellow",
-    "Bold Orange", "Bold Green & Purple", "Bold Red Features", "Bold Green Features", "Bold Cyan Features", "Bold Yellow Features",
-    "Bold Red & White", "Bold Blue & White", "Metallic Gold", "Metallic Platinum", "Metallic Gray & Lilac", "Metallic Purple & Lime",
-    "Metallic Red", "Metallic Green", "Metallic Blue", "Metallic White & Aqua", "Metallic Orange & Yellow", "Metallic Red and Yellow"
-};
+                    "Classic Black", "Classic Gray", "Classic Two-Tone", "Classic White", "Classic Beige", "Classic Green", "Classic Blue", "Classic Earth",
+                    "Classic Brown & Black", "Red Contrast", "Blue Contrast", "Yellow Contrast", "Orange Contrast", "Bold Pink", "Bold Purple & Yellow",
+                    "Bold Orange", "Bold Green & Purple", "Bold Red Features", "Bold Green Features", "Bold Cyan Features", "Bold Yellow Features",
+                    "Bold Red & White", "Bold Blue & White", "Metallic Gold", "Metallic Platinum", "Metallic Gray & Lilac", "Metallic Purple & Lime",
+                    "Metallic Red", "Metallic Green", "Metallic Blue", "Metallic White & Aqua", "Metallic Orange & Yellow", "Metallic Red and Yellow"
+                };
 
                 // Regular tint names for non-Mk2 weapons
                 string[] standardTints =
                 {
-    "Default / Black", "Green", "Gold", "Pink", "Army", "LSPD", "Orange", "Platinum"
-};
+                    "Default / Black", "Green", "Gold", "Pink", "Army", "LSPD", "Orange", "Platinum"
+                };
 
                 // Choose the right list
                 string[] tintOptions = isMk2 ? mk2Tints : standardTints;
@@ -1770,6 +2211,14 @@ namespace moreammunation
                 var excludedComponents = new HashSet<WeaponComponentHash>
                     {
                         WeaponComponentHash.GunrunMk2Upgrade,
+                        // Pistol Mk2
+                        WeaponComponentHash.PistolMk2ClipHollowPoint,
+                        WeaponComponentHash.PistolMk2ClipIncendiary,
+                        WeaponComponentHash.PistolMk2ClipTracer,
+                        WeaponComponentHash.PistolMk2ClipFMJ,
+                        WeaponComponentHash.GunrunMk2Upgrade,
+
+                        
                         // Pump Shotgun Mk2
                         WeaponComponentHash.PumpShotgunMk2ClipExplosive,
                         WeaponComponentHash.PumpShotgunMk2ClipHollowPoint,
@@ -1822,7 +2271,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
@@ -2579,6 +3034,13 @@ namespace moreammunation
                         WeaponComponentHash.RevolverMk2ClipHollowPoint,
                         WeaponComponentHash.RevolverMk2ClipIncendiary,
                         WeaponComponentHash.RevolverMk2ClipTracer,
+
+                        //Specail Carbine Mk2
+                        WeaponComponentHash.SpecialCarbineMk2ClipArmorPiercing,
+                        WeaponComponentHash.SpecialCarbineMk2ClipFMJ,
+                        WeaponComponentHash.SpecialCarbineMk2ClipIncendiary,
+                        WeaponComponentHash.SpecialCarbineMk2ClipTracer,
+
 
                         // SMG Mk2
                         WeaponComponentHash.SMGMk2ClipFMJ,
@@ -4928,7 +5390,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
@@ -5697,7 +6165,13 @@ namespace moreammunation
                         WeaponComponentHash.MarksmanRifleMk2ClipArmorPiercing,
                         WeaponComponentHash.MarksmanRifleMk2ClipFMJ,
                         WeaponComponentHash.MarksmanRifleMk2ClipIncendiary,
-                        WeaponComponentHash.MarksmanRifleMk2ClipTracer
+                        WeaponComponentHash.MarksmanRifleMk2ClipTracer,
+
+                        // HeavySniper Rifle Mk2
+                        WeaponComponentHash.HeavySniperMk2ClipArmorPiercing,
+                        WeaponComponentHash.HeavySniperMk2ClipFMJ,
+                        WeaponComponentHash.HeavySniperMk2ClipIncendiary,
+                        WeaponComponentHash.HeavySniperMk2ClipExplosive
                     };
 
                 // Check if it's a Mk2 weapon (simple detection based on name)
@@ -6285,8 +6759,8 @@ namespace moreammunation
                         return;
                     }
 
-                    int ammoPrice = 70;
-                    int ammoAmount = 50;
+                    int ammoPrice = 50;
+                    int ammoAmount = 1;
 
                     if (Game.Player.Money < ammoPrice)
                     {
@@ -6312,7 +6786,7 @@ namespace moreammunation
                         return;
                     }
 
-                    int refillPrice = 5000;
+                    int refillPrice = 3000;
 
                     if (Game.Player.Money < refillPrice)
                     {
@@ -6538,13 +7012,13 @@ namespace moreammunation
                 int totalCost = 0;
                 List<WeaponHash> weaponsToBuy = new List<WeaponHash>();
 
-                // Loop through all available weapons in the price list
+                // Loop through all available weapons in the price list 
                 foreach (var entry in WeaponValues)
                 {
                     WeaponHash hash = entry.Key;
                     int price = entry.Value;
 
-                    // Check if player already has the weapon safely
+                    // Check if player already has the weapon
                     if (!weapons.HasWeapon(hash))
                     {
                         weaponsToBuy.Add(hash);
@@ -6567,20 +7041,43 @@ namespace moreammunation
                 // Deduct money
                 Game.Player.Money -= totalCost;
 
-                // Give weapons
+                // Give weapons and update UI
                 foreach (WeaponHash hash in weaponsToBuy)
                 {
-                    weapons.Give(hash, 999, false, false); // give max ammoss
+                    weapons.Give(hash, 999, true, false); // Give weapon with ammo
 
+                    if (weaponUIs.TryGetValue(hash, out var ui))
+                    {
+                        // Update Buy
+                        ui.BuyItem.Enabled = false;
+                        ui.BuyItem.Description = "~c~You already own this weapon";
 
+                        // Enable Sell
+                        ui.SellItem.Enabled = true;
+                        ui.SellItem.Description = $"Resell for ${WeaponValues[hash]}";
+
+                        // Enable Equip
+                        ui.EquipItem.Enabled = true;
+
+                        // Add ammo options if not already present
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                            ui.WeaponMenu.Items.Insert(0, ui.BuyAmmoItem);
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                            ui.WeaponMenu.Items.Insert(1, ui.BuyFullAmmoItem);
+                    }
                 }
 
+                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
             }
             catch (Exception ex)
             {
                 GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
             }
         }
+
+        //Fix Bug where UI doesnt update after removing weapons
+
+
         private void RemoveWeapons()
         {
             Ped player = Game.Player.Character;
@@ -6588,8 +7085,8 @@ namespace moreammunation
 
             try
             {
-                // Detect if the player has any weapon at all
                 bool hasWeapons = false;
+
                 foreach (Weapon weapon in weapons)
                 {
                     if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
@@ -6607,20 +7104,39 @@ namespace moreammunation
 
                 int totalValue = 0;
 
-                foreach (Weapon weapon in weapons)
+                foreach (Weapon weapon in weapons.ToList())
                 {
-                    if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
+                    WeaponHash hash = weapon.Hash;
+
+                    if (hash != WeaponHash.Unarmed && weapon.IsPresent)
                     {
-                        int value = WeaponValues.TryGetValue(weapon.Hash, out int v) ? v : 100;
+                        int value = WeaponValues.TryGetValue(hash, out int v) ? v : 100;
                         totalValue += value;
+
+                        weapons.Remove(hash);
+
+                        // ✅ UI Cleanup
+                        if (weaponUIs.TryGetValue(hash, out var ui))
+                        {
+                            ui.SellItem.Enabled = false;
+                            ui.SellItem.Description = "~c~You do not own this weapon";
+
+                            ui.BuyItem.Enabled = true;
+                            ui.BuyItem.Description = $"Price: ${value}";
+
+                            ui.EquipItem.Enabled = false;
+
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyAmmoItem);
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyFullAmmoItem);
+                        }
                     }
                 }
 
-                // Add money
                 Game.Player.Money += totalValue;
+                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
 
-                // Remove all weapons
-                Function.Call(Hash.REMOVE_ALL_PED_WEAPONS, player, true);
             }
             catch (Exception ex)
             {
