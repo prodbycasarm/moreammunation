@@ -15,10 +15,18 @@ using static System.Windows.Forms.VisualStyles.VisualStyleElement.Menu;
 
 namespace moreammunation
 {
+    public class WeaponUI
+    {
+        public NativeItem BuyItem;
+        public NativeItem SellItem;
+        public NativeItem EquipItem;
+        public NativeItem BuyAmmoItem;
+        public NativeItem BuyFullAmmoItem;
+        public NativeMenu WeaponMenu;
+    }
     public class Main : Script
     {
         //Dictionary For Weapons
-
         public Dictionary<WeaponHash, int> WeaponValues = new Dictionary<WeaponHash, int>
         {
             // Melee
@@ -290,6 +298,7 @@ namespace moreammunation
             { WeaponHash.AcidPackage, 50 }
         };
 
+        Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
 
         private bool isNearArmoryZone = false;
         private List<Vector3> armoryZonePositions = new List<Vector3>();
@@ -491,7 +500,7 @@ namespace moreammunation
                     GTA.UI.Notification.Show($"~g~Sold {name} for ${price}");
                     sellItem.Enabled = false;
                     sellItem.Description = "~c~You no longer own this weapon";
-            
+
                 };
 
                 // CUSTOMIZE
@@ -631,7 +640,7 @@ namespace moreammunation
 
                     var clipCheckboxes = new List<NativeCheckboxItem>();
                     var otherComponents = new List<NativeCheckboxItem>();
-                    
+
                     List<WeaponComponent> allComponents = new List<WeaponComponent>();
                     for (int i = 0; i < weapon.Components.Count; i++)
                     {
@@ -1205,7 +1214,7 @@ namespace moreammunation
                     }
                 }
             };
-             // Dictionary to track buy buttons
+
             Dictionary<WeaponHash, NativeItem> handgunsItems = new Dictionary<WeaponHash, NativeItem>();
             // Dictionary to track sell buttons
             Dictionary<WeaponHash, NativeItem> handgunsSellItems = new Dictionary<WeaponHash, NativeItem>();
@@ -1257,6 +1266,15 @@ namespace moreammunation
                 handgunsItems[hash] = buyItem;
                 handgunsSellItems[hash] = sellItem;
 
+                weaponUIs[hash] = new WeaponUI
+                {
+                    BuyItem = buyItem,
+                    SellItem = sellItem,
+                    EquipItem = equipItem,
+                    BuyAmmoItem = buyAmmoItem,
+                    BuyFullAmmoItem = buyFullAmmoItem,
+                    WeaponMenu = weaponMenu
+                };
 
                 equipItem.Activated += (s, a) =>
                 {
@@ -6994,13 +7012,13 @@ namespace moreammunation
                 int totalCost = 0;
                 List<WeaponHash> weaponsToBuy = new List<WeaponHash>();
 
-                // Loop through all available weapons in the price list
+                // Loop through all available weapons in the price list 
                 foreach (var entry in WeaponValues)
                 {
                     WeaponHash hash = entry.Key;
                     int price = entry.Value;
 
-                    // Check if player already has the weapon safely
+                    // Check if player already has the weapon
                     if (!weapons.HasWeapon(hash))
                     {
                         weaponsToBuy.Add(hash);
@@ -7023,14 +7041,33 @@ namespace moreammunation
                 // Deduct money
                 Game.Player.Money -= totalCost;
 
-                // Give weapons
+                // Give weapons and update UI
                 foreach (WeaponHash hash in weaponsToBuy)
                 {
-                    weapons.Give(hash, 999, false, false); // give max ammoss
+                    weapons.Give(hash, 999, true, false); // Give weapon with ammo
 
+                    if (weaponUIs.TryGetValue(hash, out var ui))
+                    {
+                        // Update Buy
+                        ui.BuyItem.Enabled = false;
+                        ui.BuyItem.Description = "~c~You already own this weapon";
 
+                        // Enable Sell
+                        ui.SellItem.Enabled = true;
+                        ui.SellItem.Description = $"Resell for ${WeaponValues[hash]}";
+
+                        // Enable Equip
+                        ui.EquipItem.Enabled = true;
+
+                        // Add ammo options if not already present
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                            ui.WeaponMenu.Items.Insert(0, ui.BuyAmmoItem);
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                            ui.WeaponMenu.Items.Insert(1, ui.BuyFullAmmoItem);
+                    }
                 }
 
+                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
             }
             catch (Exception ex)
             {
