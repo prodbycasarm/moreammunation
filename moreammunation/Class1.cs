@@ -318,13 +318,22 @@ namespace moreammunation
         private NativeMenu throwableSubMenu;
         ScriptSettings config;
         Keys enable;
+        private List<Vehicle> armoryZoneVehicles = new List<Vehicle>();
+        private static bool armoryZonesInitialized = false;
+        private string blipSpriteString;
+        private string blipColorString;
+        private string blipName;
+        
 
         public Main()
         {
+
             Tick += OnTick;
             KeyUp += OnKeyUp;
+            Aborted += OnAborted; // <-- Add this line
 
             //SETTINGS AND BLIPS
+
 
             config = ScriptSettings.Load("scripts\\moreammunation.ini");
             string enableKeyString = config.GetValue<string>("Options", "Button", "Enter");
@@ -341,6 +350,9 @@ namespace moreammunation
             GTA.UI.Notification.Show($"Blip Settings: Sprite={blipSpriteString}, Color={blipColorString}, Name={blipName}");
             // Create the upgrade zone blip
             CreatearmoryZoneBlips(blipSpriteString, blipColorString, blipName);
+
+
+
 
 
             // Initialize LemonUI components
@@ -6923,11 +6935,33 @@ namespace moreammunation
 
         }
 
+        private void OnAborted(object sender, EventArgs e)
+        {
+            // Delete blips
+            foreach (var blip in armoryZoneBlips)
+            {
+                if (blip.Exists())
+                    blip.Delete();
+            }
+            armoryZoneBlips.Clear();
+
+            // Delete vehicles
+            foreach (var vehicle in armoryZoneVehicles)
+            {
+                if (vehicle != null && vehicle.Exists())
+                    vehicle.Delete();
+            }
+            armoryZoneVehicles.Clear();
+
+            GTA.UI.Notification.Show("~r~Armory script aborted. Blips and vehicles removed.");
+        }
 
 
 
 
         private int notificationHandle = -1;
+
+
         private void OnTick(object sender, EventArgs e)
         {
 
@@ -6991,6 +7025,10 @@ namespace moreammunation
                 {
                     // Toggle the upgrade menu visibility
                     armoryMenu.Visible = !armoryMenu.Visible;
+                }
+                if (e.KeyCode == Keys.F12) // for example
+                {
+                    ResetArmoryZones();
                 }
             }
             else
@@ -7076,8 +7114,6 @@ namespace moreammunation
         }
 
         //Fix Bug where UI doesnt update after removing weapons
-
-
         private void RemoveWeapons()
         {
             Ped player = Game.Player.Character;
@@ -7144,31 +7180,46 @@ namespace moreammunation
             }
         }
 
-
-
-
-
+        private void ResetArmoryZones()
+        {
+            armoryZonesInitialized = false;
+            LoadarmoryZonePositions();
+            CreatearmoryZoneBlips(blipSpriteString, blipColorString, blipName);
+            armoryZonesInitialized = true;
+        }
 
         private void LoadarmoryZonePositions()
         {
+            // Clear existing blips
+            foreach (var blip in armoryZoneBlips)
+            {
+                if (blip.Exists()) blip.Delete();
+            }
+            armoryZoneBlips.Clear();
+
+            // Delete previously spawned vehicles
+            foreach (var vehicle in armoryZoneVehicles)
+            {
+                if (vehicle != null && vehicle.Exists())
+                {
+                    vehicle.Delete();
+                }
+            }
+            armoryZoneVehicles.Clear(); // ✅ Add this
+
+            armoryZonePositions.Clear();
             int zoneIndex = 1;
 
             while (true)
             {
-                // Load the coordinates for each zone
                 float x = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationX", float.NaN);
                 float y = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationY", float.NaN);
                 float z = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationZ", float.NaN);
 
-                // Stop if any value is NaN
                 if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z))
-                {
-                    break; // No more upgrade zones
-                }
+                    break;
 
-                // Add the location to the list
                 armoryZonePositions.Add(new Vector3(x, y, z));
-
                 zoneIndex++;
             }
         }
@@ -7176,26 +7227,67 @@ namespace moreammunation
 
         private void CreatearmoryZoneBlips(string sprite, string color, string name)
         {
+            // Notify cleanup start
+            Notification.Show("~b~Removing old blips and mules...");
 
+            // Clear existing blips
+            foreach (var blip in armoryZoneBlips)
+            {
+                if (blip.Exists()) blip.Delete();
+            }
+            armoryZoneBlips.Clear();
+
+            // Delete previously spawned vehicles
+            foreach (var vehicle in armoryZoneVehicles)
+            {
+                if (vehicle != null && vehicle.Exists())
+                {
+                    vehicle.MarkAsNoLongerNeeded(); // Optional cleanup hint
+                    vehicle.Delete();
+                }
+            }
+            armoryZoneVehicles.Clear();
+
+            // Now recreate everything
             for (int i = 0; i < armoryZonePositions.Count; i++)
             {
+                Vector3 centralPosition = armoryZonePositions[i];
 
-                // If you want to merge the zones into a single blip, use the first zone position or average position
-                Vector3 centralPosition = armoryZonePositions[i];  // Use the first upgrade zone positio
-
-                // Create a single blip for all zonesss
+                // Create the blip
                 Blip blip = World.CreateBlip(centralPosition);
-
-                // Set the properties of the blip
-                blip.Sprite = GetBlipSprite(sprite);  // Set sprite based on the sprite string
-                blip.Color = GetBlipColor(color);  // Set color based on the color string
-                blip.Name = $"{name}";  // Set the name for the blip (no need for numbering)
-
-                // Add the created blip to the list of upgrade zone blips
-                armoryZoneBlips.Clear();  // Remove any existing blips to avoid clutter
+                blip.Sprite = GetBlipSprite(sprite);
+                blip.Color = GetBlipColor(color);
+                blip.Name = name;
                 armoryZoneBlips.Add(blip);
+
+                // Load and spawn mule4
+                Model muleModel = new Model("mule4");
+
+                if (muleModel.IsInCdImage && muleModel.IsValid)
+                {
+                    muleModel.Request(500);
+                    while (!muleModel.IsLoaded);
+
+                    Vector3 spawnPos = centralPosition + new Vector3(2f, 2f, 0f);
+                    Vehicle mule = World.CreateVehicle(muleModel, spawnPos);
+
+                    mule.IsPersistent = true;
+                    mule.AreLightsOn = true;
+
+                    // Open the left rear door
+                    Function.Call(Hash.SET_VEHICLE_DOOR_OPEN, mule, 2, false, false);
+
+                    armoryZoneVehicles.Add(mule); // Track for cleanup
+                }
+                else
+                {
+                    Notification.Show("~r~Failed to load mule4");
+                }
             }
+
+            Notification.Show("~g~Armory zones and vehicles initialized.");
         }
+        
         private BlipSprite GetBlipSprite(string spriteString)
         {
             switch (spriteString.ToLower())
