@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.Menu;
 
 
 namespace moreammunation
@@ -24,6 +23,16 @@ namespace moreammunation
         public NativeItem BuyFullAmmoItem;
         public NativeMenu WeaponMenu;
     }
+    public class ArmoryZone
+    {
+        public Vector3 Position { get; set; }
+        public string BlipSprite { get; set; }
+        public string BlipColor { get; set; }
+        public string BlipName { get; set; }
+        public bool SpawnVehicle { get; set; }
+        public string VehicleName { get; set; }
+    }
+
     public class Main : Script
     {
         //Dictionary For Weapons
@@ -145,7 +154,6 @@ namespace moreammunation
             { WeaponHash.FertilizerCan, 50 },
             { WeaponHash.AcidPackage, 50 }
         };
-
         public Dictionary<WeaponHash, int> MeleeValues = new Dictionary<WeaponHash, int>
         {
             // Melee
@@ -169,7 +177,6 @@ namespace moreammunation
 
 
         };
-
         public Dictionary<WeaponHash, int> HandgunsValues = new Dictionary<WeaponHash, int>
         {
             // Handguns
@@ -195,7 +202,6 @@ namespace moreammunation
             { WeaponHash.MachinePistol, 850 },
 
         };
-
         public Dictionary<WeaponHash, int> SMGsValues = new Dictionary<WeaponHash, int>
         {
 
@@ -209,7 +215,6 @@ namespace moreammunation
             { WeaponHash.TacticalSMG, 1200 },
 
         };
-
         public Dictionary<WeaponHash, int> RiflesValues = new Dictionary<WeaponHash, int>
         {
 
@@ -229,7 +234,6 @@ namespace moreammunation
             { WeaponHash.SpecialCarbineMk2, 14500 },
             { WeaponHash.HeavyRifle, 15000 },
         };
-
         public Dictionary<WeaponHash, int> MachineGunsValues = new Dictionary<WeaponHash, int>
         {
             // Machine Guns
@@ -240,7 +244,6 @@ namespace moreammunation
             { WeaponHash.UnholyHellbringer, 449000 },
 
         };
-
         public Dictionary<WeaponHash, int> ShotgunsValues = new Dictionary<WeaponHash, int>
         {
 
@@ -255,7 +258,6 @@ namespace moreammunation
             { WeaponHash.CombatShotgun, 2950 },
             { WeaponHash.HeavyShotgun, 13550 },
         };
-
         public Dictionary<WeaponHash, int> SnipersValues = new Dictionary<WeaponHash, int>
         {
             // Snipers
@@ -266,7 +268,6 @@ namespace moreammunation
             { WeaponHash.MarksmanRifleMk2, 16000 },
             { WeaponHash.PrecisionRifle, 10000 },
         };
-
         public Dictionary<WeaponHash, int> HeavyWeaponValues = new Dictionary<WeaponHash, int>
         {
             // Heavy Weapons
@@ -280,7 +281,6 @@ namespace moreammunation
             { WeaponHash.Railgun, 730000 },
 
         };
-
         public Dictionary<WeaponHash, int> ThrowablesValues = new Dictionary<WeaponHash, int>
         {
             // Throwables
@@ -298,12 +298,10 @@ namespace moreammunation
             { WeaponHash.AcidPackage, 50 }
         };
 
+        // Dictionary to hold WeaponUI instances for each weapon
         Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
 
-        private bool isNearArmoryZone = false;
-        private List<Vector3> armoryZonePositions = new List<Vector3>();
-        private float armoryZoneRadius = 6.0f;
-        private List<Blip> armoryZoneBlips = new List<Blip>();
+        // LemonUI components
         private ObjectPool pool;
         private NativeMenu armoryMenu;
         private NativeMenu cHWeapon;
@@ -316,16 +314,435 @@ namespace moreammunation
         private NativeMenu snipersSubMenu;
         private NativeMenu heavyweaponSubMenu;
         private NativeMenu throwableSubMenu;
+
+        // Zone management
+        private bool isNearArmoryZone = false;
+        private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
+        private List<Vehicle> armoryZoneVehicles = new List<Vehicle>();
+        private List<Blip> armoryZoneBlips = new List<Blip>();
+
+        private float armoryZoneRadius = 6.0f;
+        private int notificationHandle = -1;
+        private bool zonesCreated = false;
+
+        private Vehicle nearestArmoryVehicle = null;
+        private float vehicleInteractionDistance = 6.0f;
+
+        // Config and key settings
         ScriptSettings config;
         Keys enable;
 
+        private void OnAborted(object sender, EventArgs e)
+        {
+            int blipCount = armoryZoneBlips.Count;
+            int vehicleCount = armoryZoneVehicles.Count;
+
+            // Delete blips
+            foreach (var blip in armoryZoneBlips)
+            {
+                if (blip != null && blip.Exists())
+                    blip.Delete();
+            }
+            armoryZoneBlips.Clear();
+
+            // Delete vehicles
+            foreach (var vehicle in armoryZoneVehicles)
+            {
+                if (vehicle != null && vehicle.Exists())
+                    vehicle.Delete();
+            }
+            armoryZoneVehicles.Clear();
+
+            GTA.UI.Notification.Show($"~r~Armory script aborted. Removed {blipCount} blips and {vehicleCount} vehicles.");
+        }
+
+
+        private void OnTick(object sender, EventArgs e)
+        {
+            // Request texture (optional, keep as is)
+            Function.Call(Hash.REQUEST_STREAMED_TEXTURE_DICT, "moreammunation", true);
+            Function.Call<bool>(Hash.HAS_STREAMED_TEXTURE_DICT_LOADED, "moreammunation");
+
+            // Reset flag and nearest vehicle
+            isNearArmoryZone = false;
+            Vehicle nearestVehicle = null;
+
+            // Create blips and vehicles if not done yet
+            if (!zonesCreated)
+            {
+                CreatearmoryZoneBlips();
+                zonesCreated = true;
+            }
+
+            // Check if the player is near any spawned armory vehicle
+            foreach (var vehicle in armoryZoneVehicles)
+            {
+                if (vehicle != null && vehicle.Exists())
+                {
+                    float distance = Game.Player.Character.Position.DistanceTo(vehicle.Position);
+                    if (distance < armoryZoneRadius)
+                    {
+                        isNearArmoryZone = true;
+                        nearestVehicle = vehicle;
+                        break; // stop at the first nearby vehicle
+                    }
+                }
+            }
+
+            // Show notification if near a vehicle
+            if (isNearArmoryZone && nearestVehicle != null && Game.Player.Character.IsOnFoot)
+            {
+                string buttonName = enable.ToString();
+                if (notificationHandle == -1)
+                {
+                    notificationHandle = GTA.UI.Notification.Show($"~w~Welcome to the armoury!~w~ Press ~b~{buttonName}~w~ to buy or modify weapons.");
+                }
+            }
+            else
+            {
+                if (notificationHandle != -1)
+                {
+                    GTA.UI.Notification.Hide(notificationHandle);
+                    notificationHandle = -1;
+                }
+            }
+
+            // Update the global reference to the nearest vehicle for OnKeyUp
+            nearestArmoryVehicle = nearestVehicle;
+
+            // Process LemonUI menu pool
+            pool.Process();
+        }
+        private void OnKeyUp(object sender, KeyEventArgs e)
+        {
+            // Debugging output: Check if the player is in a vehicle and if the key is being pressed
+            if (Game.Player.Character.IsOnFoot)
+            {
+                if (isNearArmoryZone && e.KeyCode == enable)
+                {
+                    // Toggle the upgrade menu visibility
+                    armoryMenu.Visible = !armoryMenu.Visible;
+                }
+
+            }
+            else
+            {
+
+            }
+        }
+        private void LoadarmoryZonePositions()
+        {
+            int zoneIndex = 1;
+            while (true)
+            {
+                float x = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationX", float.NaN);
+                float y = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationY", float.NaN);
+                float z = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationZ", float.NaN);
+                if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z))
+                    break;
+
+                string blipSpriteString = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipSprite", "ammunation");
+                string blipColorString = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipColor", "BlueLight");
+                string blipName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipName", $"Armory {zoneIndex}");
+                bool spawnVehicle = config.GetValue<bool>($"ArmoryZone{zoneIndex}", "DeliveryVehicle", true);
+                string vehicleName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "VehicleName", "mule");
+
+                armoryZones.Add(new ArmoryZone()
+                {
+                    Position = new Vector3(x, y, z),
+                    BlipSprite = blipSpriteString,
+                    BlipColor = blipColorString,
+                    BlipName = blipName,
+                    SpawnVehicle = spawnVehicle,
+                    VehicleName = vehicleName
+                });
+
+                zoneIndex++;
+            }
+
+            Notification.Show($"~g~Loaded {armoryZones.Count} armory zones.");
+        }
+
+        private void CreatearmoryZoneBlips()
+        {
+            foreach (var zone in armoryZones)
+            {
+                if (zone.SpawnVehicle)
+                {
+                    // --- Spawn vehicle ---
+                    Model vehicleModel = new Model(zone.VehicleName);
+                    if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
+                    {
+                        vehicleModel.Request(500);
+                        while (!vehicleModel.IsLoaded) Script.Yield();
+
+                        Vehicle vehicle = World.CreateVehicle(vehicleModel, zone.Position + new Vector3(2f, 2f, 0f));
+                        vehicle.IsPersistent = true;
+                        vehicle.AreLightsOn = true;
+                        Function.Call(Hash.SET_VEHICLE_DOOR_OPEN, vehicle, 2, false, false);
+                        armoryZoneVehicles.Add(vehicle);
+
+                        // --- Create blip attached to vehicle ---
+                        int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
+                        Function.Call(Hash.SET_BLIP_SPRITE, vehicleBlipHandle, (int)GetBlipSprite(zone.BlipSprite));
+                        Function.Call(Hash.SET_BLIP_COLOUR, vehicleBlipHandle, (int)GetBlipColor(zone.BlipColor));
+                        Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
+                        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, zone.BlipName);
+                        Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
+
+                        Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
+                        armoryZoneBlips.Add(vehicleBlipObj);
+                    }
+                    else
+                    {
+                        Notification.Show($"~r~Failed to load {zone.VehicleName}");
+                    }
+                }
+                else
+                {
+                    // --- Create static zone blip ---
+                    Blip zoneBlip = World.CreateBlip(zone.Position);
+                    zoneBlip.Sprite = GetBlipSprite(zone.BlipSprite);
+                    zoneBlip.Color = GetBlipColor(zone.BlipColor);
+                    zoneBlip.Name = zone.BlipName;
+                    armoryZoneBlips.Add(zoneBlip);
+                }
+            }
+
+            Notification.Show("~g~Armory zones and vehicles initialized.");
+        }
+
+        private BlipSprite GetBlipSprite(string spriteString)
+        {
+            switch (spriteString.ToLower())
+            {
+                case "ammunation":
+                    return BlipSprite.AmmuNation;
+                case "ammunationshootingrange":
+                    return BlipSprite.AmmuNationShootingRange;
+                default:
+                    return BlipSprite.Standard; // This is the standard dot
+            }
+        }
+        private BlipColor GetBlipColor(string colorString)
+        {
+            switch (colorString.ToLower())
+            {
+                case "white":
+                    return BlipColor.White;
+                case "red":
+                    return BlipColor.Red;
+                case "green":
+                    return BlipColor.Green;
+                case "blue":
+                    return BlipColor.Blue;
+                case "yellow":
+                    return BlipColor.Yellow;
+                case "whitenotpure":
+                    return BlipColor.WhiteNotPure;
+                case "yellow2":
+                    return BlipColor.Yellow2;
+                case "greydark":
+                    return BlipColor.GreyDark;
+                case "redlight":
+                    return BlipColor.RedLight;
+                case "purple":
+                    return BlipColor.Purple;
+                case "orange":
+                    return BlipColor.Orange;
+                case "greendark":
+                    return BlipColor.GreenDark;
+                case "bluelight":
+                    return BlipColor.BlueLight;
+                case "bluedark":
+                    return BlipColor.BlueDark;
+                case "grey":
+                    return BlipColor.Grey;
+                case "yellowdark":
+                    return BlipColor.YellowDark;
+                case "pink":
+                    return BlipColor.Pink;
+                case "greylight":
+                    return BlipColor.GreyLight;
+                case "blue3":
+                    return BlipColor.Blue3;
+                case "blue4":
+                    return BlipColor.Blue4;
+                case "green2":
+                    return BlipColor.Green2;
+                case "yellow4":
+                    return BlipColor.Yellow4;
+                case "yellow5":
+                    return BlipColor.Yellow5;
+                case "white2":
+                    return BlipColor.White2;
+                case "yellow6":
+                    return BlipColor.Yellow6;
+                case "blue5":
+                    return BlipColor.Blue5;
+                case "red4":
+                    return BlipColor.Red4;
+                case "reddark":
+                    return BlipColor.RedDark;
+                case "blue6":
+                    return BlipColor.Blue6;
+                case "bluedark2":
+                    return BlipColor.BlueDark2;
+                case "reddark2":
+                    return BlipColor.RedDark2;
+                case "menuyellow":
+                    return BlipColor.MenuYellow;
+                case "blue7":
+                    return BlipColor.Blue7;
+                default:
+                    return BlipColor.BlueLight; // Default color if not matched
+            }
+        }
+        private void BuyAllWeapons()
+        {
+            Ped player = Game.Player.Character;
+            var weapons = player.Weapons;
+
+            try
+            {
+                int totalCost = 0;
+                List<WeaponHash> weaponsToBuy = new List<WeaponHash>();
+
+                // Loop through all available weapons in the price list 
+                foreach (var entry in WeaponValues)
+                {
+                    WeaponHash hash = entry.Key;
+                    int price = entry.Value;
+
+                    // Check if player already has the weapon
+                    if (!weapons.HasWeapon(hash))
+                    {
+                        weaponsToBuy.Add(hash);
+                        totalCost += price;
+                    }
+                }
+
+                if (weaponsToBuy.Count == 0)
+                {
+                    GTA.UI.Notification.Show("~g~You already own all weapons.");
+                    return;
+                }
+
+                if (Game.Player.Money < totalCost)
+                {
+                    GTA.UI.Notification.Show($"~r~Not enough money! You need ~y~${totalCost}");
+                    return;
+                }
+
+                // Deduct money
+                Game.Player.Money -= totalCost;
+
+                // Give weapons and update UI
+                foreach (WeaponHash hash in weaponsToBuy)
+                {
+                    weapons.Give(hash, 999, true, false); // Give weapon with ammo
+
+                    if (weaponUIs.TryGetValue(hash, out var ui))
+                    {
+                        // Update Buy
+                        ui.BuyItem.Enabled = false;
+                        ui.BuyItem.Description = "~c~You already own this weapon";
+
+                        // Enable Sell
+                        ui.SellItem.Enabled = true;
+                        ui.SellItem.Description = $"Resell for ${WeaponValues[hash]}";
+
+                        // Enable Equip
+                        ui.EquipItem.Enabled = true;
+
+                        // Add ammo options if not already present
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                            ui.WeaponMenu.Items.Insert(0, ui.BuyAmmoItem);
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                            ui.WeaponMenu.Items.Insert(1, ui.BuyFullAmmoItem);
+                    }
+                }
+
+                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
+            }
+            catch (Exception ex)
+            {
+                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
+            }
+        }
+        private void RemoveWeapons()
+        {
+            Ped player = Game.Player.Character;
+            var weapons = player.Weapons;
+
+            try
+            {
+                bool hasWeapons = false;
+
+                foreach (Weapon weapon in weapons)
+                {
+                    if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
+                    {
+                        hasWeapons = true;
+                        break;
+                    }
+                }
+
+                if (!hasWeapons)
+                {
+                    GTA.UI.Notification.Show("~r~You do not have any weapons!");
+                    return;
+                }
+
+                int totalValue = 0;
+
+                foreach (Weapon weapon in weapons.ToList())
+                {
+                    WeaponHash hash = weapon.Hash;
+
+                    if (hash != WeaponHash.Unarmed && weapon.IsPresent)
+                    {
+                        int value = WeaponValues.TryGetValue(hash, out int v) ? v : 100;
+                        totalValue += value;
+
+                        weapons.Remove(hash);
+
+                        // ✅ UI Cleanup
+                        if (weaponUIs.TryGetValue(hash, out var ui))
+                        {
+                            ui.SellItem.Enabled = false;
+                            ui.SellItem.Description = "~c~You do not own this weapon";
+
+                            ui.BuyItem.Enabled = true;
+                            ui.BuyItem.Description = $"Price: ${value}";
+
+                            ui.EquipItem.Enabled = false;
+
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyAmmoItem);
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyFullAmmoItem);
+                        }
+                    }
+                }
+
+                Game.Player.Money += totalValue;
+                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
+
+            }
+            catch (Exception ex)
+            {
+                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
+            }
+        }
         public Main()
         {
+
             Tick += OnTick;
             KeyUp += OnKeyUp;
+            Aborted += OnAborted;
 
-            //SETTINGS AND BLIPS
-
+            // Load settings
             config = ScriptSettings.Load("scripts\\moreammunation.ini");
             string enableKeyString = config.GetValue<string>("Options", "Button", "Enter");
             if (!Enum.TryParse(enableKeyString, out enable))
@@ -333,14 +750,23 @@ namespace moreammunation
                 enable = Keys.Enter;
                 Notification.Show("Failed to parse key, using default 'Enter'");
             }
-            LoadarmoryZonePositions();
-            // Load the blip settings from the config file
+
+            LoadarmoryZonePositions(); // only loads coordinates
+
             string blipSpriteString = config.GetValue<string>("Blip", "Sprite", "ammunation");
             string blipColorString = config.GetValue<string>("Blip", "Color", "BlueLight");
             string blipName = config.GetValue<string>("Blip", "Name", "Armoury");
-            GTA.UI.Notification.Show($"Blip Settings: Sprite={blipSpriteString}, Color={blipColorString}, Name={blipName}");
-            // Create the upgrade zone blip
-            CreatearmoryZoneBlips(blipSpriteString, blipColorString, blipName);
+
+            //vehicle spawn settings
+            bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "deliveryVehicle", true);
+            string vehicleName = config.GetValue<string>("VehicleOptions", "vehicleName", "mule");
+
+
+
+            GTA.UI.Notification.Show("Armory script loaded, waiting to create blips...");
+
+
+
 
 
             // Initialize LemonUI components
@@ -6923,364 +7349,5 @@ namespace moreammunation
 
         }
 
-
-
-
-
-        private int notificationHandle = -1;
-        private void OnTick(object sender, EventArgs e)
-        {
-
-            Function.Call(Hash.REQUEST_STREAMED_TEXTURE_DICT, "moreammunation", true);
-            Function.Call<bool>(Hash.HAS_STREAMED_TEXTURE_DICT_LOADED, "moreammunation");
-
-
-            // Reset isNearammunation flag
-            isNearArmoryZone = false;
-
-            // Check if the player is near any armoryZone
-            foreach (var zone in armoryZonePositions)
-            {
-                if (Game.Player.Character.Position.DistanceTo(zone) < armoryZoneRadius)
-                {
-                    isNearArmoryZone = true;
-                    break; // No need to check further once we find one zone
-                }
-            }
-
-            // If the player is near any armoryZone
-            if (isNearArmoryZone)
-            {
-                // Check if the player is in a vehicle
-                if (Game.Player.Character.IsOnFoot)
-                {
-                    string buttonName = enable.ToString();
-                    // Show the armory message if the player is in a vehicle and the notification is not already shown
-                    if (notificationHandle == -1)
-                    {
-                        notificationHandle = GTA.UI.Notification.Show($"~w~Welcome to the armoury!~w~ Press ~b~{buttonName}~w~ to buy or modify weapons.");
-                    }
-                }
-                else
-                {
-                    if (notificationHandle == -1)
-                    {
-
-                    }
-                }
-            }
-            else
-            {
-                if (notificationHandle != -1)
-                {
-                    GTA.UI.Notification.Hide(notificationHandle); // Hide the notification using the handle
-                    notificationHandle = -1; // Reset the handle to indicate no active notification
-                }
-            }
-
-            // Process LemonUI menu pool
-            pool.Process();
         }
-
-        private void OnKeyUp(object sender, KeyEventArgs e)
-        {
-            // Debugging output: Check if the player is in a vehicle and if the key is being pressed
-            if (Game.Player.Character.IsOnFoot)
-            {
-                if (isNearArmoryZone && e.KeyCode == enable)
-                {
-                    // Toggle the upgrade menu visibility
-                    armoryMenu.Visible = !armoryMenu.Visible;
-                }
-            }
-            else
-            {
-
-            }
-        }
-
-        //VOID FUNCTIONS HERE
-
-
-        private void BuyAllWeapons()
-        {
-            Ped player = Game.Player.Character;
-            var weapons = player.Weapons;
-
-            try
-            {
-                int totalCost = 0;
-                List<WeaponHash> weaponsToBuy = new List<WeaponHash>();
-
-                // Loop through all available weapons in the price list 
-                foreach (var entry in WeaponValues)
-                {
-                    WeaponHash hash = entry.Key;
-                    int price = entry.Value;
-
-                    // Check if player already has the weapon
-                    if (!weapons.HasWeapon(hash))
-                    {
-                        weaponsToBuy.Add(hash);
-                        totalCost += price;
-                    }
-                }
-
-                if (weaponsToBuy.Count == 0)
-                {
-                    GTA.UI.Notification.Show("~g~You already own all weapons.");
-                    return;
-                }
-
-                if (Game.Player.Money < totalCost)
-                {
-                    GTA.UI.Notification.Show($"~r~Not enough money! You need ~y~${totalCost}");
-                    return;
-                }
-
-                // Deduct money
-                Game.Player.Money -= totalCost;
-
-                // Give weapons and update UI
-                foreach (WeaponHash hash in weaponsToBuy)
-                {
-                    weapons.Give(hash, 999, true, false); // Give weapon with ammo
-
-                    if (weaponUIs.TryGetValue(hash, out var ui))
-                    {
-                        // Update Buy
-                        ui.BuyItem.Enabled = false;
-                        ui.BuyItem.Description = "~c~You already own this weapon";
-
-                        // Enable Sell
-                        ui.SellItem.Enabled = true;
-                        ui.SellItem.Description = $"Resell for ${WeaponValues[hash]}";
-
-                        // Enable Equip
-                        ui.EquipItem.Enabled = true;
-
-                        // Add ammo options if not already present
-                        if (!ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
-                            ui.WeaponMenu.Items.Insert(0, ui.BuyAmmoItem);
-                        if (!ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
-                            ui.WeaponMenu.Items.Insert(1, ui.BuyFullAmmoItem);
-                    }
-                }
-
-                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
-            }
-            catch (Exception ex)
-            {
-                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
-            }
-        }
-
-        //Fix Bug where UI doesnt update after removing weapons
-
-
-        private void RemoveWeapons()
-        {
-            Ped player = Game.Player.Character;
-            var weapons = player.Weapons;
-
-            try
-            {
-                bool hasWeapons = false;
-
-                foreach (Weapon weapon in weapons)
-                {
-                    if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
-                    {
-                        hasWeapons = true;
-                        break;
-                    }
-                }
-
-                if (!hasWeapons)
-                {
-                    GTA.UI.Notification.Show("~r~You do not have any weapons!");
-                    return;
-                }
-
-                int totalValue = 0;
-
-                foreach (Weapon weapon in weapons.ToList())
-                {
-                    WeaponHash hash = weapon.Hash;
-
-                    if (hash != WeaponHash.Unarmed && weapon.IsPresent)
-                    {
-                        int value = WeaponValues.TryGetValue(hash, out int v) ? v : 100;
-                        totalValue += value;
-
-                        weapons.Remove(hash);
-
-                        // ✅ UI Cleanup
-                        if (weaponUIs.TryGetValue(hash, out var ui))
-                        {
-                            ui.SellItem.Enabled = false;
-                            ui.SellItem.Description = "~c~You do not own this weapon";
-
-                            ui.BuyItem.Enabled = true;
-                            ui.BuyItem.Description = $"Price: ${value}";
-
-                            ui.EquipItem.Enabled = false;
-
-                            if (ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
-                                ui.WeaponMenu.Items.Remove(ui.BuyAmmoItem);
-                            if (ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
-                                ui.WeaponMenu.Items.Remove(ui.BuyFullAmmoItem);
-                        }
-                    }
-                }
-
-                Game.Player.Money += totalValue;
-                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
-
-            }
-            catch (Exception ex)
-            {
-                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
-            }
-        }
-
-
-
-
-
-
-        private void LoadarmoryZonePositions()
-        {
-            int zoneIndex = 1;
-
-            while (true)
-            {
-                // Load the coordinates for each zone
-                float x = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationX", float.NaN);
-                float y = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationY", float.NaN);
-                float z = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationZ", float.NaN);
-
-                // Stop if any value is NaN
-                if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z))
-                {
-                    break; // No more upgrade zones
-                }
-
-                // Add the location to the list
-                armoryZonePositions.Add(new Vector3(x, y, z));
-
-                zoneIndex++;
-            }
-        }
-
-
-        private void CreatearmoryZoneBlips(string sprite, string color, string name)
-        {
-
-            for (int i = 0; i < armoryZonePositions.Count; i++)
-            {
-
-                // If you want to merge the zones into a single blip, use the first zone position or average position
-                Vector3 centralPosition = armoryZonePositions[i];  // Use the first upgrade zone positio
-
-                // Create a single blip for all zonesss
-                Blip blip = World.CreateBlip(centralPosition);
-
-                // Set the properties of the blip
-                blip.Sprite = GetBlipSprite(sprite);  // Set sprite based on the sprite string
-                blip.Color = GetBlipColor(color);  // Set color based on the color string
-                blip.Name = $"{name}";  // Set the name for the blip (no need for numbering)
-
-                // Add the created blip to the list of upgrade zone blips
-                armoryZoneBlips.Clear();  // Remove any existing blips to avoid clutter
-                armoryZoneBlips.Add(blip);
-            }
-        }
-        private BlipSprite GetBlipSprite(string spriteString)
-        {
-            switch (spriteString.ToLower())
-            {
-                case "ammunation":
-                    return BlipSprite.AmmuNation;
-                case "ammunationshootingrange":
-                    return BlipSprite.AmmuNationShootingRange;
-                default:
-                    return BlipSprite.Standard; // This is the standard dot
-            }
-        }
-        private BlipColor GetBlipColor(string colorString)
-        {
-            switch (colorString.ToLower())
-            {
-                case "white":
-                    return BlipColor.White;
-                case "red":
-                    return BlipColor.Red;
-                case "green":
-                    return BlipColor.Green;
-                case "blue":
-                    return BlipColor.Blue;
-                case "yellow":
-                    return BlipColor.Yellow;
-                case "whitenotpure":
-                    return BlipColor.WhiteNotPure;
-                case "yellow2":
-                    return BlipColor.Yellow2;
-                case "greydark":
-                    return BlipColor.GreyDark;
-                case "redlight":
-                    return BlipColor.RedLight;
-                case "purple":
-                    return BlipColor.Purple;
-                case "orange":
-                    return BlipColor.Orange;
-                case "greendark":
-                    return BlipColor.GreenDark;
-                case "bluelight":
-                    return BlipColor.BlueLight;
-                case "bluedark":
-                    return BlipColor.BlueDark;
-                case "grey":
-                    return BlipColor.Grey;
-                case "yellowdark":
-                    return BlipColor.YellowDark;
-                case "pink":
-                    return BlipColor.Pink;
-                case "greylight":
-                    return BlipColor.GreyLight;
-                case "blue3":
-                    return BlipColor.Blue3;
-                case "blue4":
-                    return BlipColor.Blue4;
-                case "green2":
-                    return BlipColor.Green2;
-                case "yellow4":
-                    return BlipColor.Yellow4;
-                case "yellow5":
-                    return BlipColor.Yellow5;
-                case "white2":
-                    return BlipColor.White2;
-                case "yellow6":
-                    return BlipColor.Yellow6;
-                case "blue5":
-                    return BlipColor.Blue5;
-                case "red4":
-                    return BlipColor.Red4;
-                case "reddark":
-                    return BlipColor.RedDark;
-                case "blue6":
-                    return BlipColor.Blue6;
-                case "bluedark2":
-                    return BlipColor.BlueDark2;
-                case "reddark2":
-                    return BlipColor.RedDark2;
-                case "menuyellow":
-                    return BlipColor.MenuYellow;
-                case "blue7":
-                    return BlipColor.Blue7;
-                default:
-                    return BlipColor.BlueLight; // Default color if not matched
-            }
-        }
-    }
 }
