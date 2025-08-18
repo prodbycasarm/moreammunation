@@ -368,9 +368,7 @@ namespace moreammunation
             }
             staticZoneBlips.Clear();
 
-            GTA.UI.Notification.Show(
-                $"~r~Armory script aborted. Removed {blipCount + staticBlipCount} blips and {vehicleCount} vehicles."
-            );
+            
         }
 
 
@@ -646,8 +644,6 @@ namespace moreammunation
                     staticZoneBlips.Add(zoneBlip);
                 }
             }
-
-            Notification.Show("~g~Armory zones and vehicles initialized.");
         }
 
         private BlipSprite GetBlipSprite(string spriteString)
