@@ -7,6 +7,7 @@ using LemonUI.Elements;
 using LemonUI.Menus;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -32,7 +33,7 @@ namespace moreammunation
         public bool SpawnVehicle { get; set; }
         public string VehicleName { get; set; }
     }
-
+    
     public class Main : Script
     {
         //Dictionary For Weapons
@@ -318,15 +319,22 @@ namespace moreammunation
         // Zone management
         private bool isNearArmoryZone = false;
         private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
-        private List<Vehicle> armoryZoneVehicles = new List<Vehicle>();
-        private List<Blip> armoryZoneBlips = new List<Blip>();
+        // private List<Vehicle> armoryZoneVehicles = new List<Vehicle>();
+        //private List<Blip> armoryZoneBlips = new List<Blip>();
+        private Dictionary<Vehicle, Blip> vehicleBlips = new Dictionary<Vehicle, Blip>();
+        private List<Blip> staticZoneBlips = new List<Blip>();
+        private List<VehicleRespawn> vehiclesToRespawn = new List<VehicleRespawn>();
+        private class VehicleRespawn
+        {
+            public ArmoryZone Zone;
+            public DateTime RespawnTime;
+        }
 
         private float armoryZoneRadius = 6.0f;
         private int notificationHandle = -1;
         private bool zonesCreated = false;
 
         private Vehicle nearestArmoryVehicle = null;
-        private float vehicleInteractionDistance = 6.0f;
 
         // Config and key settings
         ScriptSettings config;
@@ -334,27 +342,37 @@ namespace moreammunation
 
         private void OnAborted(object sender, EventArgs e)
         {
-            int blipCount = armoryZoneBlips.Count;
-            int vehicleCount = armoryZoneVehicles.Count;
+            int vehicleCount = vehicleBlips.Count;
+            int blipCount = vehicleBlips.Count; // same as vehicles, one blip per vehicle
 
-            // Delete blips
-            foreach (var blip in armoryZoneBlips)
+            // Delete vehicle-linked blips and vehicles
+            foreach (var pair in vehicleBlips)
+            {
+                Vehicle v = pair.Key;
+                Blip b = pair.Value;
+
+                if (b != null && b.Exists())
+                    b.Delete();
+
+                if (v != null && v.Exists())
+                    v.Delete();
+            }
+            vehicleBlips.Clear();
+
+            // If you have separate static blips (zones without vehicles), clean them too
+            int staticBlipCount = staticZoneBlips.Count;
+            foreach (var blip in staticZoneBlips)
             {
                 if (blip != null && blip.Exists())
                     blip.Delete();
             }
-            armoryZoneBlips.Clear();
+            staticZoneBlips.Clear();
 
-            // Delete vehicles
-            foreach (var vehicle in armoryZoneVehicles)
-            {
-                if (vehicle != null && vehicle.Exists())
-                    vehicle.Delete();
-            }
-            armoryZoneVehicles.Clear();
-
-            GTA.UI.Notification.Show($"~r~Armory script aborted. Removed {blipCount} blips and {vehicleCount} vehicles.");
+            GTA.UI.Notification.Show(
+                $"~r~Armory script aborted. Removed {blipCount + staticBlipCount} blips and {vehicleCount} vehicles."
+            );
         }
+
 
 
         private void OnTick(object sender, EventArgs e)
@@ -370,12 +388,14 @@ namespace moreammunation
             // Create blips and vehicles if not done yet
             if (!zonesCreated)
             {
+                CleanupExistingArmoryVehicles();
                 CreatearmoryZoneBlips();
                 zonesCreated = true;
             }
 
-            // Check if the player is near any spawned armory vehicle
-            foreach (var vehicle in armoryZoneVehicles)
+
+            // Check if the player is near any spawned armory vehicle (using dictionary keys)
+            foreach (var vehicle in vehicleBlips.Keys)
             {
                 if (vehicle != null && vehicle.Exists())
                 {
@@ -388,6 +408,7 @@ namespace moreammunation
                     }
                 }
             }
+
 
             // Show notification if near a vehicle
             if (isNearArmoryZone && nearestVehicle != null && Game.Player.Character.IsOnFoot)
@@ -406,6 +427,86 @@ namespace moreammunation
                     notificationHandle = -1;
                 }
             }
+
+
+
+
+            // Logic for destroyed vehicles
+            var toRemove = new List<Vehicle>();
+            
+            foreach (var pair in vehicleBlips)
+            {
+                Vehicle v = pair.Key;
+                Blip b = pair.Value;
+                
+                if (!v.Exists() || v.IsDead)
+                {
+                    if (b.Exists()) b.Delete();
+                    
+                    ArmoryZone zone = armoryZones.FirstOrDefault(z => v.Model.Hash == new Model(z.VehicleName).Hash);
+                    if (zone != null)
+                    {
+                        
+                        vehiclesToRespawn.Add(new VehicleRespawn
+                        {
+                            Zone = zone,
+                            RespawnTime = DateTime.Now.AddSeconds(60)
+                        });
+                    }
+                    toRemove.Add(v);
+                }
+
+            }
+
+            // Remove destroyed vehicles from dictionary
+            foreach (var v in toRemove)
+            {
+                vehicleBlips.Remove(v);
+            }
+
+
+
+
+            // Check for vehicles that need to respawn
+            var respawnNow = vehiclesToRespawn.Where(v => DateTime.Now >= v.RespawnTime).ToList();
+
+            foreach (var respawn in respawnNow)
+            {
+                foreach (var vehicle in World.GetAllVehicles())
+                {
+                    if (vehicle.Exists() && vehicle.Model.Hash == new Model(respawn.Zone.VehicleName).Hash)
+                    {
+                        vehicle.Delete();
+                    }
+                }
+                // Spawn vehicle again
+                Model vehicleModel = new Model(respawn.Zone.VehicleName);
+                if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
+                {
+                    vehicleModel.Request(500);
+                    while (!vehicleModel.IsLoaded) Script.Yield();
+
+                    Vehicle vehicle = World.CreateVehicle(vehicleModel, respawn.Zone.Position + new Vector3(2f, 2f, 0f));
+                    vehicle.IsPersistent = true;
+                    vehicle.AreLightsOn = true;
+                    vehicle.AreBrakeLightsOn = true;
+
+                    // Blip
+                    int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
+                    Function.Call(Hash.SET_BLIP_SPRITE, vehicleBlipHandle, (int)GetBlipSprite(respawn.Zone.BlipSprite));
+                    Function.Call(Hash.SET_BLIP_COLOUR, vehicleBlipHandle, (int)GetBlipColor(respawn.Zone.BlipColor));
+                    Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
+                    Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, respawn.Zone.BlipName);
+                    Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
+
+                    Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
+                    vehicleBlips.Add(vehicle, vehicleBlipObj);
+                }
+
+                vehiclesToRespawn.Remove(respawn); // done respawning
+            }
+
+
 
             // Update the global reference to the nearest vehicle for OnKeyUp
             nearestArmoryVehicle = nearestVehicle;
@@ -462,6 +563,23 @@ namespace moreammunation
 
             Notification.Show($"~g~Loaded {armoryZones.Count} armory zones.");
         }
+        private void CleanupExistingArmoryVehicles()
+        {
+            foreach (var vehicle in World.GetAllVehicles())
+            {
+                foreach (var zone in armoryZones)
+                {
+                    if (vehicle.Model.Hash == new Model(zone.VehicleName).Hash)
+                    {
+                        if (vehicle.Exists())
+                            vehicle.Delete();
+                    }
+                }
+            }
+
+            vehicleBlips.Clear();
+            vehiclesToRespawn.Clear();
+        }
 
         private void CreatearmoryZoneBlips()
         {
@@ -479,8 +597,23 @@ namespace moreammunation
                         Vehicle vehicle = World.CreateVehicle(vehicleModel, zone.Position + new Vector3(2f, 2f, 0f));
                         vehicle.IsPersistent = true;
                         vehicle.AreLightsOn = true;
-                        Function.Call(Hash.SET_VEHICLE_DOOR_OPEN, vehicle, 2, false, false);
-                        armoryZoneVehicles.Add(vehicle);
+                        vehicle.AreBrakeLightsOn = true;
+
+                        // Decide which door to open
+                        int doorIndex = 5; // try trunk first
+
+                        // Check if the trunk exists
+                        if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
+                        {
+                            // If no trunk, use rear right door (index 2)
+                            doorIndex = 2;
+
+                            // If even door 2 doesn't exist, just use door 0 (front left) as a fallback
+                            if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
+                            {
+                                doorIndex = 0;
+                            }
+                        }
 
                         // --- Create blip attached to vehicle ---
                         int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
@@ -491,12 +624,17 @@ namespace moreammunation
                         Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
 
                         Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
-                        armoryZoneBlips.Add(vehicleBlipObj);
+                        vehicleBlips.Add(vehicle, vehicleBlipObj);
+
+
+                
                     }
+                    
                     else
                     {
                         Notification.Show($"~r~Failed to load {zone.VehicleName}");
                     }
+
                 }
                 else
                 {
@@ -505,7 +643,7 @@ namespace moreammunation
                     zoneBlip.Sprite = GetBlipSprite(zone.BlipSprite);
                     zoneBlip.Color = GetBlipColor(zone.BlipColor);
                     zoneBlip.Name = zone.BlipName;
-                    armoryZoneBlips.Add(zoneBlip);
+                    staticZoneBlips.Add(zoneBlip);
                 }
             }
 
@@ -751,16 +889,16 @@ namespace moreammunation
                 Notification.Show("Failed to parse key, using default 'Enter'");
             }
 
-            LoadarmoryZonePositions(); // only loads coordinates
+            LoadarmoryZonePositions(); // Only loads coordinates
 
             string blipSpriteString = config.GetValue<string>("Blip", "Sprite", "ammunation");
             string blipColorString = config.GetValue<string>("Blip", "Color", "BlueLight");
             string blipName = config.GetValue<string>("Blip", "Name", "Armoury");
 
-            //vehicle spawn settings
+            // Vehicle spawn settings
             bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "deliveryVehicle", true);
             string vehicleName = config.GetValue<string>("VehicleOptions", "vehicleName", "mule");
-
+            //int vehicleHeistPricePay = config.GetValue<int>("VehicleOptions", "heistPay", 100000);
 
 
             GTA.UI.Notification.Show("Armory script loaded, waiting to create blips...");
