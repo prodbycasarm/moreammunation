@@ -7,6 +7,7 @@ using LemonUI.Elements;
 using LemonUI.Menus;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -479,7 +480,23 @@ namespace moreammunation
                         Vehicle vehicle = World.CreateVehicle(vehicleModel, zone.Position + new Vector3(2f, 2f, 0f));
                         vehicle.IsPersistent = true;
                         vehicle.AreLightsOn = true;
-                        Function.Call(Hash.SET_VEHICLE_DOOR_OPEN, vehicle, 2, false, false);
+                        vehicle.AreBrakeLightsOn = true;
+
+                        // Decide which door to open
+                        int doorIndex = 5; // try trunk first
+
+                        // Check if the trunk exists
+                        if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
+                        {
+                            // If no trunk, use rear right door (index 2)
+                            doorIndex = 2;
+
+                            // If even door 2 doesn't exist, just use door 0 (front left) as a fallback
+                            if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
+                            {
+                                doorIndex = 0;
+                            }
+                        }
                         armoryZoneVehicles.Add(vehicle);
 
                         // --- Create blip attached to vehicle ---
@@ -497,6 +514,7 @@ namespace moreammunation
                     {
                         Notification.Show($"~r~Failed to load {zone.VehicleName}");
                     }
+
                 }
                 else
                 {
