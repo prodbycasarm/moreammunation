@@ -894,7 +894,7 @@ namespace moreammunation
             // Vehicle spawn settings
             bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "deliveryVehicle", true);
             string vehicleName = config.GetValue<string>("VehicleOptions", "vehicleName", "mule");
-            //int vehicleHeistPricePay = config.GetValue<int>("VehicleOptions", "heistPay", 100000);
+            int vehicleHeistPricePay = config.GetValue<int>("VehicleOptions", "heistPay", 100000);
 
 
             GTA.UI.Notification.Show("Armory script loaded, waiting to create blips...");
