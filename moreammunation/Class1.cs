@@ -32,6 +32,8 @@ namespace moreammunation
         public string BlipName { get; set; }
         public bool SpawnVehicle { get; set; }
         public string VehicleName { get; set; }
+
+        public int HeistReward;
     }
     
     public class Main : Script
@@ -336,6 +338,14 @@ namespace moreammunation
 
         private Vehicle nearestArmoryVehicle = null;
 
+        //HEIST
+
+        private Keys heistKey; // Key to start heist
+        private int buyWeaponsNotification = -1;
+        private int heistNotification = -1;
+        private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
+        private int lastWantedLevel = 0;
+
         // Config and key settings
         ScriptSettings config;
         Keys enable;
@@ -411,20 +421,37 @@ namespace moreammunation
             // Show notification if near a vehicle
             if (isNearArmoryZone && nearestVehicle != null && Game.Player.Character.IsOnFoot)
             {
-                string buttonName = enable.ToString();
-                if (notificationHandle == -1)
+                // Buy/modify weapons notification
+                if (buyWeaponsNotification == -1)
                 {
-                    notificationHandle = GTA.UI.Notification.Show($"~w~Welcome to the armoury!~w~ Press ~b~{buttonName}~w~ to buy or modify weapons.");
+                    buyWeaponsNotification = GTA.UI.Notification.Show(
+                        $"~w~Press ~b~{enable}~w~ to buy/modify weapons"
+                    );
+                }
+
+                // Heist notification
+                if (heistNotification == -1)
+                {
+                    heistNotification = GTA.UI.Notification.Show(
+                        $"~w~Press ~b~{heistKey}~w~ to rob the vehicle"
+                    );
                 }
             }
             else
             {
-                if (notificationHandle != -1)
+                // Hide notifications when leaving zone
+                if (buyWeaponsNotification != -1)
                 {
-                    GTA.UI.Notification.Hide(notificationHandle);
-                    notificationHandle = -1;
+                    GTA.UI.Notification.Hide(buyWeaponsNotification);
+                    buyWeaponsNotification = -1;
+                }
+                if (heistNotification != -1)
+                {
+                    GTA.UI.Notification.Hide(heistNotification);
+                    heistNotification = -1;
                 }
             }
+
 
 
 
@@ -505,6 +532,26 @@ namespace moreammunation
             }
 
 
+            //Logic For Armory Heist
+            if (lastWantedLevel > 0 && Game.Player.WantedLevel == 0)
+            {
+                // Player just lost all wanted stars
+                foreach (var pair in heistActive.ToList())
+                {
+                    if (pair.Value) // heist was active
+                    {
+                        // Give the reward
+                        int reward = pair.Key.HeistReward;
+                        Game.Player.Money += reward;
+                        GTA.UI.Notification.Show($"~g~Heist complete! You earned ${reward:N0}.");
+
+                        // Mark heist as done
+                        heistActive[pair.Key] = false;
+                    }
+                }
+            }
+
+            lastWantedLevel = Game.Player.WantedLevel;
 
             // Update the global reference to the nearest vehicle for OnKeyUp
             nearestArmoryVehicle = nearestVehicle;
@@ -514,21 +561,36 @@ namespace moreammunation
         }
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
-            // Debugging output: Check if the player is in a vehicle and if the key is being pressed
-            if (Game.Player.Character.IsOnFoot)
+            if (Game.Player.Character.IsOnFoot && isNearArmoryZone)
             {
-                if (isNearArmoryZone && e.KeyCode == enable)
+                // Open armory menu
+                if (e.KeyCode == enable)
                 {
-                    // Toggle the upgrade menu visibility
                     armoryMenu.Visible = !armoryMenu.Visible;
                 }
 
-            }
-            else
-            {
+                // Start heist (wanted level)
+                if (e.KeyCode == heistKey && nearestArmoryVehicle != null)
+                {
+                    Game.Player.WantedLevel = 3; // Safe, instant
+                    GTA.UI.Notification.Show("~r~Heist started! Wanted level set to 3 stars.");
 
+                    // Find which armory zone we are near
+                    ArmoryZone currentZone = armoryZones.FirstOrDefault(z =>
+                        nearestArmoryVehicle.Model.Hash == new Model(z.VehicleName).Hash
+                    );
+
+                    if (currentZone != null)
+                    {
+                        if (!heistActive.ContainsKey(currentZone))
+                            heistActive.Add(currentZone, true);
+                        else
+                            heistActive[currentZone] = true;
+                    }
+                }
             }
         }
+
         private void LoadarmoryZonePositions()
         {
             int zoneIndex = 1;
@@ -553,7 +615,9 @@ namespace moreammunation
                     BlipColor = blipColorString,
                     BlipName = blipName,
                     SpawnVehicle = spawnVehicle,
-                    VehicleName = vehicleName
+                    VehicleName = vehicleName,
+                    HeistReward = config.GetValue<int>($"ArmoryZone{zoneIndex}", "heistReward", 110000),
+
                 });
 
                 zoneIndex++;
@@ -646,230 +710,7 @@ namespace moreammunation
             }
         }
 
-        private BlipSprite GetBlipSprite(string spriteString)
-        {
-            switch (spriteString.ToLower())
-            {
-                case "ammunation":
-                    return BlipSprite.AmmuNation;
-                case "ammunationshootingrange":
-                    return BlipSprite.AmmuNationShootingRange;
-                default:
-                    return BlipSprite.Standard; // This is the standard dot
-            }
-        }
-        private BlipColor GetBlipColor(string colorString)
-        {
-            switch (colorString.ToLower())
-            {
-                case "white":
-                    return BlipColor.White;
-                case "red":
-                    return BlipColor.Red;
-                case "green":
-                    return BlipColor.Green;
-                case "blue":
-                    return BlipColor.Blue;
-                case "yellow":
-                    return BlipColor.Yellow;
-                case "whitenotpure":
-                    return BlipColor.WhiteNotPure;
-                case "yellow2":
-                    return BlipColor.Yellow2;
-                case "greydark":
-                    return BlipColor.GreyDark;
-                case "redlight":
-                    return BlipColor.RedLight;
-                case "purple":
-                    return BlipColor.Purple;
-                case "orange":
-                    return BlipColor.Orange;
-                case "greendark":
-                    return BlipColor.GreenDark;
-                case "bluelight":
-                    return BlipColor.BlueLight;
-                case "bluedark":
-                    return BlipColor.BlueDark;
-                case "grey":
-                    return BlipColor.Grey;
-                case "yellowdark":
-                    return BlipColor.YellowDark;
-                case "pink":
-                    return BlipColor.Pink;
-                case "greylight":
-                    return BlipColor.GreyLight;
-                case "blue3":
-                    return BlipColor.Blue3;
-                case "blue4":
-                    return BlipColor.Blue4;
-                case "green2":
-                    return BlipColor.Green2;
-                case "yellow4":
-                    return BlipColor.Yellow4;
-                case "yellow5":
-                    return BlipColor.Yellow5;
-                case "white2":
-                    return BlipColor.White2;
-                case "yellow6":
-                    return BlipColor.Yellow6;
-                case "blue5":
-                    return BlipColor.Blue5;
-                case "red4":
-                    return BlipColor.Red4;
-                case "reddark":
-                    return BlipColor.RedDark;
-                case "blue6":
-                    return BlipColor.Blue6;
-                case "bluedark2":
-                    return BlipColor.BlueDark2;
-                case "reddark2":
-                    return BlipColor.RedDark2;
-                case "menuyellow":
-                    return BlipColor.MenuYellow;
-                case "blue7":
-                    return BlipColor.Blue7;
-                default:
-                    return BlipColor.BlueLight; // Default color if not matched
-            }
-        }
-        private void BuyAllWeapons()
-        {
-            Ped player = Game.Player.Character;
-            var weapons = player.Weapons;
-
-            try
-            {
-                int totalCost = 0;
-                List<WeaponHash> weaponsToBuy = new List<WeaponHash>();
-
-                // Loop through all available weapons in the price list 
-                foreach (var entry in WeaponValues)
-                {
-                    WeaponHash hash = entry.Key;
-                    int price = entry.Value;
-
-                    // Check if player already has the weapon
-                    if (!weapons.HasWeapon(hash))
-                    {
-                        weaponsToBuy.Add(hash);
-                        totalCost += price;
-                    }
-                }
-
-                if (weaponsToBuy.Count == 0)
-                {
-                    GTA.UI.Notification.Show("~g~You already own all weapons.");
-                    return;
-                }
-
-                if (Game.Player.Money < totalCost)
-                {
-                    GTA.UI.Notification.Show($"~r~Not enough money! You need ~y~${totalCost}");
-                    return;
-                }
-
-                // Deduct money
-                Game.Player.Money -= totalCost;
-
-                // Give weapons and update UI
-                foreach (WeaponHash hash in weaponsToBuy)
-                {
-                    weapons.Give(hash, 999, true, false); // Give weapon with ammo
-
-                    if (weaponUIs.TryGetValue(hash, out var ui))
-                    {
-                        // Update Buy
-                        ui.BuyItem.Enabled = false;
-                        ui.BuyItem.Description = "~c~You already own this weapon";
-
-                        // Enable Sell
-                        ui.SellItem.Enabled = true;
-                        ui.SellItem.Description = $"Resell for ${WeaponValues[hash]}";
-
-                        // Enable Equip
-                        ui.EquipItem.Enabled = true;
-
-                        // Add ammo options if not already present
-                        if (!ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
-                            ui.WeaponMenu.Items.Insert(0, ui.BuyAmmoItem);
-                        if (!ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
-                            ui.WeaponMenu.Items.Insert(1, ui.BuyFullAmmoItem);
-                    }
-                }
-
-                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
-            }
-            catch (Exception ex)
-            {
-                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
-            }
-        }
-        private void RemoveWeapons()
-        {
-            Ped player = Game.Player.Character;
-            var weapons = player.Weapons;
-
-            try
-            {
-                bool hasWeapons = false;
-
-                foreach (Weapon weapon in weapons)
-                {
-                    if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
-                    {
-                        hasWeapons = true;
-                        break;
-                    }
-                }
-
-                if (!hasWeapons)
-                {
-                    GTA.UI.Notification.Show("~r~You do not have any weapons!");
-                    return;
-                }
-
-                int totalValue = 0;
-
-                foreach (Weapon weapon in weapons.ToList())
-                {
-                    WeaponHash hash = weapon.Hash;
-
-                    if (hash != WeaponHash.Unarmed && weapon.IsPresent)
-                    {
-                        int value = WeaponValues.TryGetValue(hash, out int v) ? v : 100;
-                        totalValue += value;
-
-                        weapons.Remove(hash);
-
-                        // ✅ UI Cleanup
-                        if (weaponUIs.TryGetValue(hash, out var ui))
-                        {
-                            ui.SellItem.Enabled = false;
-                            ui.SellItem.Description = "~c~You do not own this weapon";
-
-                            ui.BuyItem.Enabled = true;
-                            ui.BuyItem.Description = $"Price: ${value}";
-
-                            ui.EquipItem.Enabled = false;
-
-                            if (ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
-                                ui.WeaponMenu.Items.Remove(ui.BuyAmmoItem);
-                            if (ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
-                                ui.WeaponMenu.Items.Remove(ui.BuyFullAmmoItem);
-                        }
-                    }
-                }
-
-                Game.Player.Money += totalValue;
-                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
-
-            }
-            catch (Exception ex)
-            {
-                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
-            }
-        }
-        public Main()
+         public Main()
         {
 
             Tick += OnTick;
@@ -885,6 +726,14 @@ namespace moreammunation
                 Notification.Show("Failed to parse key, using default 'Enter'");
             }
 
+            string heistKeyString = config.GetValue<string>("Options", "HeistButton", "H"); // default H
+            if (!Enum.TryParse(heistKeyString, out heistKey))
+            {
+                heistKey = Keys.H; // fallback
+                GTA.UI.Notification.Show("Failed to parse heist key, using default 'H'");
+            }
+
+
             LoadarmoryZonePositions(); // Only loads coordinates
 
             string blipSpriteString = config.GetValue<string>("Blip", "Sprite", "ammunation");
@@ -892,10 +741,9 @@ namespace moreammunation
             string blipName = config.GetValue<string>("Blip", "Name", "Armoury");
 
             // Vehicle spawn settings
-            bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "deliveryVehicle", true);
-            string vehicleName = config.GetValue<string>("VehicleOptions", "vehicleName", "mule");
-            int vehicleHeistPricePay = config.GetValue<int>("VehicleOptions", "heistPay", 100000);
-
+            bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "DeliveryVehicle", true);
+            string vehicleName = config.GetValue<string>("VehicleOptions", "VehicleName", "mule");
+            
 
             GTA.UI.Notification.Show("Armory script loaded, waiting to create blips...");
 
@@ -7482,6 +7330,229 @@ namespace moreammunation
 
 
         }
-
+        private BlipSprite GetBlipSprite(string spriteString)
+        {
+            switch (spriteString.ToLower())
+            {
+                case "ammunation":
+                    return BlipSprite.AmmuNation;
+                case "ammunationshootingrange":
+                    return BlipSprite.AmmuNationShootingRange;
+                default:
+                    return BlipSprite.Standard; // This is the standard dot
+            }
         }
+        private BlipColor GetBlipColor(string colorString)
+        {
+            switch (colorString.ToLower())
+            {
+                case "white":
+                    return BlipColor.White;
+                case "red":
+                    return BlipColor.Red;
+                case "green":
+                    return BlipColor.Green;
+                case "blue":
+                    return BlipColor.Blue;
+                case "yellow":
+                    return BlipColor.Yellow;
+                case "whitenotpure":
+                    return BlipColor.WhiteNotPure;
+                case "yellow2":
+                    return BlipColor.Yellow2;
+                case "greydark":
+                    return BlipColor.GreyDark;
+                case "redlight":
+                    return BlipColor.RedLight;
+                case "purple":
+                    return BlipColor.Purple;
+                case "orange":
+                    return BlipColor.Orange;
+                case "greendark":
+                    return BlipColor.GreenDark;
+                case "bluelight":
+                    return BlipColor.BlueLight;
+                case "bluedark":
+                    return BlipColor.BlueDark;
+                case "grey":
+                    return BlipColor.Grey;
+                case "yellowdark":
+                    return BlipColor.YellowDark;
+                case "pink":
+                    return BlipColor.Pink;
+                case "greylight":
+                    return BlipColor.GreyLight;
+                case "blue3":
+                    return BlipColor.Blue3;
+                case "blue4":
+                    return BlipColor.Blue4;
+                case "green2":
+                    return BlipColor.Green2;
+                case "yellow4":
+                    return BlipColor.Yellow4;
+                case "yellow5":
+                    return BlipColor.Yellow5;
+                case "white2":
+                    return BlipColor.White2;
+                case "yellow6":
+                    return BlipColor.Yellow6;
+                case "blue5":
+                    return BlipColor.Blue5;
+                case "red4":
+                    return BlipColor.Red4;
+                case "reddark":
+                    return BlipColor.RedDark;
+                case "blue6":
+                    return BlipColor.Blue6;
+                case "bluedark2":
+                    return BlipColor.BlueDark2;
+                case "reddark2":
+                    return BlipColor.RedDark2;
+                case "menuyellow":
+                    return BlipColor.MenuYellow;
+                case "blue7":
+                    return BlipColor.Blue7;
+                default:
+                    return BlipColor.BlueLight; // Default color if not matched
+            }
+        }
+        private void BuyAllWeapons()
+        {
+            Ped player = Game.Player.Character;
+            var weapons = player.Weapons;
+
+            try
+            {
+                int totalCost = 0;
+                List<WeaponHash> weaponsToBuy = new List<WeaponHash>();
+
+                // Loop through all available weapons in the price list 
+                foreach (var entry in WeaponValues)
+                {
+                    WeaponHash hash = entry.Key;
+                    int price = entry.Value;
+
+                    // Check if player already has the weapon
+                    if (!weapons.HasWeapon(hash))
+                    {
+                        weaponsToBuy.Add(hash);
+                        totalCost += price;
+                    }
+                }
+
+                if (weaponsToBuy.Count == 0)
+                {
+                    GTA.UI.Notification.Show("~g~You already own all weapons.");
+                    return;
+                }
+
+                if (Game.Player.Money < totalCost)
+                {
+                    GTA.UI.Notification.Show($"~r~Not enough money! You need ~y~${totalCost}");
+                    return;
+                }
+
+                // Deduct money
+                Game.Player.Money -= totalCost;
+
+                // Give weapons and update UI
+                foreach (WeaponHash hash in weaponsToBuy)
+                {
+                    weapons.Give(hash, 999, true, false); // Give weapon with ammo
+
+                    if (weaponUIs.TryGetValue(hash, out var ui))
+                    {
+                        // Update Buy
+                        ui.BuyItem.Enabled = false;
+                        ui.BuyItem.Description = "~c~You already own this weapon";
+
+                        // Enable Sell
+                        ui.SellItem.Enabled = true;
+                        ui.SellItem.Description = $"Resell for ${WeaponValues[hash]}";
+
+                        // Enable Equip
+                        ui.EquipItem.Enabled = true;
+
+                        // Add ammo options if not already present
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                            ui.WeaponMenu.Items.Insert(0, ui.BuyAmmoItem);
+                        if (!ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                            ui.WeaponMenu.Items.Insert(1, ui.BuyFullAmmoItem);
+                    }
+                }
+
+                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
+            }
+            catch (Exception ex)
+            {
+                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
+            }
+        }
+        private void RemoveWeapons()
+        {
+            Ped player = Game.Player.Character;
+            var weapons = player.Weapons;
+
+            try
+            {
+                bool hasWeapons = false;
+
+                foreach (Weapon weapon in weapons)
+                {
+                    if (weapon.Hash != WeaponHash.Unarmed && weapon.IsPresent)
+                    {
+                        hasWeapons = true;
+                        break;
+                    }
+                }
+
+                if (!hasWeapons)
+                {
+                    GTA.UI.Notification.Show("~r~You do not have any weapons!");
+                    return;
+                }
+
+                int totalValue = 0;
+
+                foreach (Weapon weapon in weapons.ToList())
+                {
+                    WeaponHash hash = weapon.Hash;
+
+                    if (hash != WeaponHash.Unarmed && weapon.IsPresent)
+                    {
+                        int value = WeaponValues.TryGetValue(hash, out int v) ? v : 100;
+                        totalValue += value;
+
+                        weapons.Remove(hash);
+
+                        // ✅ UI Cleanup
+                        if (weaponUIs.TryGetValue(hash, out var ui))
+                        {
+                            ui.SellItem.Enabled = false;
+                            ui.SellItem.Description = "~c~You do not own this weapon";
+
+                            ui.BuyItem.Enabled = true;
+                            ui.BuyItem.Description = $"Price: ${value}";
+
+                            ui.EquipItem.Enabled = false;
+
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyAmmoItem);
+                            if (ui.WeaponMenu.Items.Contains(ui.BuyFullAmmoItem))
+                                ui.WeaponMenu.Items.Remove(ui.BuyFullAmmoItem);
+                        }
+                    }
+                }
+
+                Game.Player.Money += totalValue;
+                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
+
+            }
+            catch (Exception ex)
+            {
+                GTA.UI.Notification.Show("~r~An error occurred: " + ex.Message);
+            }
+        }
+
+    }
 }
