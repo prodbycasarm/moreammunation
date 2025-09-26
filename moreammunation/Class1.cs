@@ -11,6 +11,7 @@ using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using static System.Runtime.CompilerServices.RuntimeHelpers;
 
 
 namespace moreammunation
@@ -304,6 +305,13 @@ namespace moreammunation
         // Dictionary to hold WeaponUI instances for each weapon
         Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
 
+        // Struct to manage vehicle respawn timing
+        private class VehicleRespawn
+        {
+            public ArmoryZone Zone;
+            public DateTime RespawnTime;
+        }
+
         // LemonUI components
         private ObjectPool pool;
         private NativeMenu armoryMenu;
@@ -321,30 +329,23 @@ namespace moreammunation
         // Zone management
         private bool isNearArmoryZone = false;
         private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
-        // private List<Vehicle> armoryZoneVehicles = new List<Vehicle>();
-        //private List<Blip> armoryZoneBlips = new List<Blip>();
         private Dictionary<Vehicle, Blip> vehicleBlips = new Dictionary<Vehicle, Blip>();
         private List<Blip> staticZoneBlips = new List<Blip>();
         private List<VehicleRespawn> vehiclesToRespawn = new List<VehicleRespawn>();
-        private class VehicleRespawn
-        {
-            public ArmoryZone Zone;
-            public DateTime RespawnTime;
-        }
-
         private float armoryZoneRadius = 6.0f;
         private int notificationHandle = -1;
         private bool zonesCreated = false;
-
         private Vehicle nearestArmoryVehicle = null;
 
         //HEIST
-
+        private Blip heistBlip = null;
+        private bool cleanupDone = false;
         private Keys heistKey; // Key to start heist
         private int buyWeaponsNotification = -1;
         private int heistNotification = -1;
         private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
         private int lastWantedLevel = 0;
+        private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
 
         // Config and key settings
         ScriptSettings config;
@@ -378,7 +379,10 @@ namespace moreammunation
             }
             staticZoneBlips.Clear();
 
-            
+            // Remove the delivery blip
+            if (heistBlip != null && heistBlip.Exists())
+                heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
+
         }
 
 
@@ -452,10 +456,6 @@ namespace moreammunation
                 }
             }
 
-
-
-
-
             // Logic for destroyed vehicles
             var toRemove = new List<Vehicle>();
             
@@ -515,6 +515,9 @@ namespace moreammunation
                     vehicle.IsPersistent = true;
                     vehicle.AreLightsOn = true;
                     vehicle.AreBrakeLightsOn = true;
+                    vehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                    vehicle.IsDriveable = false;
+
 
                     // Blip
                     int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
@@ -553,6 +556,46 @@ namespace moreammunation
 
             lastWantedLevel = Game.Player.WantedLevel;
 
+            if (!cleanupDone)
+            {
+                // remove any leftover delivery blips
+                foreach (Blip b in World.GetAllBlips())
+                {
+                    if (b.Exists() && b.Name == "Delivery Point")
+                    {
+                        b.Delete();
+                    }
+                }
+                cleanupDone = true;
+            }
+            foreach (var pair in heistActive.ToList())
+            {
+                if (pair.Value) // heist is active
+                {
+                    Vehicle playerVehicle = nearestArmoryVehicle;
+                    if (playerVehicle != null && playerVehicle.Exists())
+                    {
+                        float distanceToTarget = playerVehicle.Position.DistanceTo(heistTarget);
+                        if (distanceToTarget < 6.0f) // arrival radius
+                        {
+                            int reward = pair.Key.HeistReward;
+                            Game.Player.Money += reward;
+                            GTA.UI.Notification.Show($"~g~Heist complete! You earned ${reward:N0}.");
+
+                            heistActive[pair.Key] = false; // mark as done
+
+                            // Remove the delivery blip
+                            if (heistBlip != null && heistBlip.Exists())
+                            {
+                                heistBlip.Delete();
+                                heistBlip = null;
+                            }
+                        }
+                    }
+                }
+            }
+
+
             // Update the global reference to the nearest vehicle for OnKeyUp
             nearestArmoryVehicle = nearestVehicle;
 
@@ -575,19 +618,41 @@ namespace moreammunation
                     Game.Player.WantedLevel = 3; // Safe, instant
                     GTA.UI.Notification.Show("~r~Heist started! Wanted level set to 3 stars.");
 
+                    // Unlock the vehicle so the player can enter
+                    nearestArmoryVehicle.LockStatus = VehicleLockStatus.Unlocked;
+                    nearestArmoryVehicle.IsDriveable = true; // Optional: make sure AI can drive it if needed
+
                     // Find which armory zone we are near
                     ArmoryZone currentZone = armoryZones.FirstOrDefault(z =>
                         nearestArmoryVehicle.Model.Hash == new Model(z.VehicleName).Hash
                     );
 
-                    if (currentZone != null)
+                    
+
+                    if (e.KeyCode == heistKey && isNearArmoryZone && nearestArmoryVehicle != null)
                     {
-                        if (!heistActive.ContainsKey(currentZone))
-                            heistActive.Add(currentZone, true);
-                        else
+                        if (!heistActive.ContainsKey(currentZone)) // make sure a heist isn’t already active
+                        {
                             heistActive[currentZone] = true;
+
+                            // Set waypoint to Sandy Shores Airfield
+                            if (heistBlip != null && heistBlip.Exists())
+                                heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
+
+                            // Store this as a field if you want to remove it later
+                            heistBlip = World.CreateBlip(heistTarget);
+                            heistBlip.Sprite = BlipSprite.Standard;
+                            heistBlip.Color = BlipColor.Yellow;
+                            heistBlip.Name = "Delivery Point";
+                            heistBlip.ShowRoute = true;               // THIS makes the GPS line appear
+
+
+                            GTA.UI.Notification.Show($"~r~Heist started! Deliver the vehicle to Sandy Shores Airfield.");
+                        }
                     }
                 }
+
+                
             }
         }
 
@@ -660,6 +725,8 @@ namespace moreammunation
                         vehicle.IsPersistent = true;
                         vehicle.AreLightsOn = true;
                         vehicle.AreBrakeLightsOn = true;
+                        vehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                        vehicle.IsDriveable = false;
 
                         // Decide which door to open
                         int doorIndex = 5; // try trunk first
