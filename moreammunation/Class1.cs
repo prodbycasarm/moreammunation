@@ -590,6 +590,7 @@ namespace moreammunation
                             nearestArmoryVehicle.IsDriveable = false; // Optional: make sure AI can drive it if needed
 
                             heistActive[pair.Key] = false; // mark as done
+                            nearestArmoryVehicle.Delete();
 
                             // Remove the delivery blip
                             if (heistBlip != null && heistBlip.Exists())
@@ -609,6 +610,7 @@ namespace moreammunation
             // Process LemonUI menu pool
             pool.Process();
         }
+        
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
             if (Game.Player.Character.IsOnFoot && isNearArmoryZone)
