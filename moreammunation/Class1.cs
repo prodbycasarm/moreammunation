@@ -581,6 +581,13 @@ namespace moreammunation
                             int reward = pair.Key.HeistReward;
                             Game.Player.Money += reward;
                             GTA.UI.Notification.Show($"~g~Heist complete! You earned ${reward:N0}.");
+                            Game.Player.WantedLevel = 0;
+                            if (Game.Player.Character.IsInVehicle())
+                            {
+                                Game.Player.Character.Task.LeaveVehicle(playerVehicle, LeaveVehicleFlags.None);
+                            }
+                            nearestArmoryVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                            nearestArmoryVehicle.IsDriveable = false; // Optional: make sure AI can drive it if needed
 
                             heistActive[pair.Key] = false; // mark as done
 
