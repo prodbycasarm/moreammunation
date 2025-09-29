@@ -326,7 +326,7 @@ namespace moreammunation
         private NativeMenu heavyweaponSubMenu;
         private NativeMenu throwableSubMenu;
 
-        // Zone management
+        // Zone management 
         private bool isNearArmoryZone = false;
         private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
         private Dictionary<Vehicle, Blip> vehicleBlips = new Dictionary<Vehicle, Blip>();
