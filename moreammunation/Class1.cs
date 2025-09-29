@@ -330,10 +330,10 @@ namespace moreammunation
         private bool isNearArmoryZone = false;
         private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
         private Dictionary<Vehicle, Blip> vehicleBlips = new Dictionary<Vehicle, Blip>();
+
         private List<Blip> staticZoneBlips = new List<Blip>();
         private List<VehicleRespawn> vehiclesToRespawn = new List<VehicleRespawn>();
         private float armoryZoneRadius = 6.0f;
-        private int notificationHandle = -1;
         private bool zonesCreated = false;
         private Vehicle nearestArmoryVehicle = null;
 
@@ -385,8 +385,6 @@ namespace moreammunation
                 heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
 
         }
-
-
 
         private void OnTick(object sender, EventArgs e)
         {
@@ -476,7 +474,7 @@ namespace moreammunation
                         vehiclesToRespawn.Add(new VehicleRespawn
                         {
                             Zone = zone,
-                            RespawnTime = DateTime.Now.AddSeconds(60)
+                            RespawnTime = DateTime.Now.AddSeconds(5)
                         });
                     }
                     toRemove.Add(v);
