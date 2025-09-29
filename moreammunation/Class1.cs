@@ -304,7 +304,7 @@ namespace moreammunation
 
         // Dictionary to hold WeaponUI instances for each weapon
         Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
-
+        
         // Struct to manage vehicle respawn timing
         private class VehicleRespawn
         {
@@ -346,6 +346,7 @@ namespace moreammunation
         private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
         private int lastWantedLevel = 0;
         private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
+        private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
 
         // Config and key settings
         ScriptSettings config;
@@ -536,23 +537,7 @@ namespace moreammunation
 
 
             //Logic For Armory Heist
-            if (lastWantedLevel > 0 && Game.Player.WantedLevel == 0)
-            {
-                // Player just lost all wanted stars
-                foreach (var pair in heistActive.ToList())
-                {
-                    if (pair.Value) // heist was active
-                    {
-                        // Give the reward
-                        int reward = pair.Key.HeistReward;
-                        Game.Player.Money += reward;
-                        GTA.UI.Notification.Show($"~g~Heist complete! You earned ${reward:N0}.");
 
-                        // Mark heist as done
-                        heistActive[pair.Key] = false;
-                    }
-                }
-            }
 
             lastWantedLevel = Game.Player.WantedLevel;
 
@@ -576,7 +561,7 @@ namespace moreammunation
                     if (playerVehicle != null && playerVehicle.Exists())
                     {
                         float distanceToTarget = playerVehicle.Position.DistanceTo(heistTarget);
-                        if (distanceToTarget < 6.0f) // arrival radius
+                        if (distanceToTarget < 8.0f) // arrival radius
                         {
                             int reward = pair.Key.HeistReward;
                             Game.Player.Money += reward;
@@ -587,17 +572,57 @@ namespace moreammunation
                                 Game.Player.Character.Task.LeaveVehicle(playerVehicle, LeaveVehicleFlags.None);
                             }
                             nearestArmoryVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
-                            nearestArmoryVehicle.IsDriveable = false; // Optional: make sure AI can drive it if needed
+                            nearestArmoryVehicle.IsDriveable = false;
 
+                            if (playerVehicle != null && playerVehicle.Exists())
+                            {
+                                // Stop the vehicle instantly
+                                playerVehicle.Speed = 0f;
+                                playerVehicle.Velocity = Vector3.Zero;           // completely nullifies movement
+                                playerVehicle.IsDriveable = false;              // optional: prevent AI or player from moving
+                                playerVehicle.AreBrakeLightsOn = true;               // optional: visually shows brakes applied
+
+                                // Make player leave the vehicle
+                                if (Game.Player.Character.IsInVehicle())
+                                    Game.Player.Character.Task.LeaveVehicle(playerVehicle, LeaveVehicleFlags.None);
+
+                                // Lock the vehicle
+                                nearestArmoryVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                            }
                             heistActive[pair.Key] = false; // mark as done
-                            nearestArmoryVehicle.Delete();
 
-                            // Remove the delivery blip
+                            // Queue respawn back at the original zone
+                            ArmoryZone zone = pair.Key;
+                            vehiclesToRespawn.Add(new VehicleRespawn
+                            {
+                                Zone = zone,
+                                RespawnTime = DateTime.Now.AddSeconds(10)
+                            });
+
+                            // Queue vehicle for deletion after 5 seconds
+                            vehiclesToDelete.Add((nearestArmoryVehicle, DateTime.Now.AddSeconds(5)));
+
+                            // Remove delivery blip
                             if (heistBlip != null && heistBlip.Exists())
                             {
                                 heistBlip.Delete();
                                 heistBlip = null;
                             }
+                            // 2️⃣ Delayed vehicle deletion (runs every tick)
+                            for (int i = vehiclesToDelete.Count - 1; i >= 0; i--)
+                            {
+                                var (veh, deleteAt) = vehiclesToDelete[i];
+                                if (DateTime.Now >= deleteAt)
+                                {
+                                    if (veh != null && veh.Exists())
+                                        veh.Delete(); // Instantly disappears
+
+                                    vehiclesToDelete.RemoveAt(i);
+                                }
+                            }
+
+
+
                         }
                     }
                 }
@@ -629,7 +654,17 @@ namespace moreammunation
 
                     // Unlock the vehicle so the player can enter
                     nearestArmoryVehicle.LockStatus = VehicleLockStatus.Unlocked;
-                    nearestArmoryVehicle.IsDriveable = true; // Optional: make sure AI can drive it if needed
+                    nearestArmoryVehicle.IsDriveable = true;
+                    Function.Call(Hash.TASK_ENTER_VEHICLE,
+                        Game.Player.Character.Handle,        // Ped handle
+                        nearestArmoryVehicle.Handle,         // Vehicle handle
+                        -1,                                  // Timeout (-1 = infinite)
+                        -1,                                  // Seat index (-1 = driver)
+                        2.0f,                                // Speed
+                        1,                                   // Flag (1 = normal entry)
+                        0                                    // p6 (unused)
+                    );
+                    Function.Call(Hash.SET_VEHICLE_DOOR_SHUT, nearestArmoryVehicle.Handle, 5, false);
 
                     // Find which armory zone we are near
                     ArmoryZone currentZone = armoryZones.FirstOrDefault(z =>
