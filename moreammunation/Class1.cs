@@ -36,7 +36,7 @@ namespace moreammunation
 
         public int HeistReward;
     }
-    
+
     public class Main : Script
     {
         //Dictionary For Weapons
@@ -304,13 +304,16 @@ namespace moreammunation
 
         // Dictionary to hold WeaponUI instances for each weapon
         Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
-        
+
         // Struct to manage vehicle respawn timing
-        private class VehicleRespawn
+        class VehicleRespawn
         {
-            public ArmoryZone Zone;
-            public DateTime RespawnTime;
+            public ArmoryZone Zone { get; set; }
+            public Vehicle Vehicle { get; set; } // the exact vehicle instance
+            public DateTime RespawnTime { get; set; }
         }
+
+
 
         // LemonUI components
         private ObjectPool pool;
@@ -326,7 +329,7 @@ namespace moreammunation
         private NativeMenu heavyweaponSubMenu;
         private NativeMenu throwableSubMenu;
 
-        // Zone management 
+        // Zone management
         private bool isNearArmoryZone = false;
         private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
         private Dictionary<Vehicle, Blip> vehicleBlips = new Dictionary<Vehicle, Blip>();
@@ -347,6 +350,7 @@ namespace moreammunation
         private int lastWantedLevel = 0;
         private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
         private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
+        private Dictionary<Vehicle, ArmoryZone> vehicleZoneMapping = new Dictionary<Vehicle, ArmoryZone>();
 
         // Config and key settings
         ScriptSettings config;
@@ -384,6 +388,72 @@ namespace moreammunation
             if (heistBlip != null && heistBlip.Exists())
                 heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
 
+        }
+        private void OnKeyUp(object sender, KeyEventArgs e)
+        {
+            if (Game.Player.Character.IsOnFoot && isNearArmoryZone)
+            {
+                // Open armory menu
+                if (e.KeyCode == enable)
+                {
+                    armoryMenu.Visible = !armoryMenu.Visible;
+                }
+
+                // Start heist (wanted level)
+                if (e.KeyCode == heistKey && nearestArmoryVehicle != null)
+                {
+                    Game.Player.WantedLevel = 3; // Safe, instant
+                    GTA.UI.Notification.Show("~r~Heist started! Wanted level set to 3 stars.");
+
+                    // Unlock the vehicle so the player can enter
+                    nearestArmoryVehicle.LockStatus = VehicleLockStatus.Unlocked;
+                    nearestArmoryVehicle.IsDriveable = true;
+                    Function.Call(Hash.TASK_ENTER_VEHICLE,
+                        Game.Player.Character.Handle,        // Ped handle
+                        nearestArmoryVehicle.Handle,         // Vehicle handle
+                        -1,                                  // Timeout (-1 = infinite)
+                        -1,                                  // Seat index (-1 = driver)
+                        2.0f,                                // Speed
+                        1,                                   // Flag (1 = normal entry)
+                        0                                    // p6 (unused)
+                    );
+                    Function.Call(Hash.SET_VEHICLE_DOOR_SHUT, nearestArmoryVehicle.Handle, 5, false);
+
+                    // Find which armory zone we are near
+                    if (!vehicleZoneMapping.TryGetValue(nearestArmoryVehicle, out ArmoryZone currentZone))
+                    {
+                        GTA.UI.Notification.Show("~r~Error: Could not determine vehicle zone!");
+                        return;
+                    }
+
+
+
+
+                    if (e.KeyCode == heistKey && isNearArmoryZone && nearestArmoryVehicle != null)
+                    {
+                        if (!heistActive.ContainsKey(currentZone)) // make sure a heist isn’t already active
+                        {
+                            heistActive[currentZone] = true;
+
+                            // Set waypoint to Sandy Shores Airfield
+                            if (heistBlip != null && heistBlip.Exists())
+                                heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
+
+                            // Store this as a field if you want to remove it later
+                            heistBlip = World.CreateBlip(heistTarget);
+                            heistBlip.Sprite = BlipSprite.Standard;
+                            heistBlip.Color = BlipColor.Yellow;
+                            heistBlip.Name = "Delivery Point";
+                            heistBlip.ShowRoute = true;               // THIS makes the GPS line appear
+
+
+                            GTA.UI.Notification.Show($"~r~Heist started! Deliver the vehicle to Sandy Shores Airfield.");
+                        }
+                    }
+                }
+
+
+            }
         }
 
         private void OnTick(object sender, EventArgs e)
@@ -457,29 +527,41 @@ namespace moreammunation
 
             // Logic for destroyed vehicles
             var toRemove = new List<Vehicle>();
-            
+
             foreach (var pair in vehicleBlips)
             {
                 Vehicle v = pair.Key;
                 Blip b = pair.Value;
-                
+
                 if (!v.Exists() || v.IsDead)
                 {
                     if (b.Exists()) b.Delete();
-                    
-                    ArmoryZone zone = armoryZones.FirstOrDefault(z => v.Model.Hash == new Model(z.VehicleName).Hash);
-                    if (zone != null)
+
+                    // Get the zone associated with this vehicle
+                    if (vehicleZoneMapping.TryGetValue(v, out ArmoryZone zone))
                     {
-                        
                         vehiclesToRespawn.Add(new VehicleRespawn
                         {
-                            Zone = zone,
-                            RespawnTime = DateTime.Now.AddSeconds(5)
+                            Zone = zone,      // use the zone from the dictionary
+                            Vehicle = v,      // use the vehicle being iterated
+                            RespawnTime = DateTime.Now.AddSeconds(10)
                         });
                     }
+
                     toRemove.Add(v);
                 }
+            }
 
+            for (int i = vehiclesToDelete.Count - 1; i >= 0; i--)
+            {
+                var (veh, deleteAt) = vehiclesToDelete[i];
+                if (DateTime.Now >= deleteAt)
+                {
+                    if (veh != null && veh.Exists())
+                        veh.Delete();
+
+                    vehiclesToDelete.RemoveAt(i);
+                }
             }
 
             // Remove destroyed vehicles from dictionary
@@ -496,42 +578,51 @@ namespace moreammunation
 
             foreach (var respawn in respawnNow)
             {
-                foreach (var vehicle in World.GetAllVehicles())
+                // Delete the old vehicle safely
+                if (respawn.Vehicle != null && respawn.Vehicle.Exists())
+                    respawn.Vehicle.Delete();
+
+                // Spawn a new vehicle for that zone
+                Model vehicleModel = new Model(respawn.Zone.VehicleName);
+                vehicleModel.Request(500);
+                while (!vehicleModel.IsLoaded) Script.Yield();
+
+                Vehicle newVehicle = World.CreateVehicle(vehicleModel, respawn.Zone.Position + new Vector3(2f, 2f, 0f));
+                newVehicle.IsPersistent = true;
+                newVehicle.AreLightsOn = true;
+                newVehicle.AreBrakeLightsOn = true;
+                newVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                newVehicle.IsDriveable = false;
+                // Decide which door to open
+                int doorIndex = 5; // try trunk first
+
+                // Check if the trunk exists
+                if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, newVehicle.Handle, doorIndex))
                 {
-                    if (vehicle.Exists() && vehicle.Model.Hash == new Model(respawn.Zone.VehicleName).Hash)
+                    // If no trunk, use rear right door (index 2)
+                    doorIndex = 2;
+
+                    // If even door 2 doesn't exist, just use door 0 (front left) as a fallback
+                    if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, newVehicle.Handle, doorIndex))
                     {
-                        vehicle.Delete();
+                        doorIndex = 0;
                     }
                 }
-                // Spawn vehicle again
-                Model vehicleModel = new Model(respawn.Zone.VehicleName);
-                if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
-                {
-                    vehicleModel.Request(500);
-                    while (!vehicleModel.IsLoaded) Script.Yield();
+                // Create blip
+                int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, newVehicle.Handle);
+                Function.Call(Hash.SET_BLIP_SPRITE, vehicleBlipHandle, (int)GetBlipSprite(respawn.Zone.BlipSprite));
+                Function.Call(Hash.SET_BLIP_COLOUR, vehicleBlipHandle, (int)GetBlipColor(respawn.Zone.BlipColor));
+                Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
+                Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, respawn.Zone.BlipName);
+                Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
 
-                    Vehicle vehicle = World.CreateVehicle(vehicleModel, respawn.Zone.Position + new Vector3(2f, 2f, 0f));
-                    vehicle.IsPersistent = true;
-                    vehicle.AreLightsOn = true;
-                    vehicle.AreBrakeLightsOn = true;
-                    vehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
-                    vehicle.IsDriveable = false;
+                Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
+                vehicleBlips.Add(newVehicle, vehicleBlipObj);
+                vehicleZoneMapping[newVehicle] = respawn.Zone; // link the new vehicle to the zone
 
-
-                    // Blip
-                    int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
-                    Function.Call(Hash.SET_BLIP_SPRITE, vehicleBlipHandle, (int)GetBlipSprite(respawn.Zone.BlipSprite));
-                    Function.Call(Hash.SET_BLIP_COLOUR, vehicleBlipHandle, (int)GetBlipColor(respawn.Zone.BlipColor));
-                    Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
-                    Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, respawn.Zone.BlipName);
-                    Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
-
-                    Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
-                    vehicleBlips.Add(vehicle, vehicleBlipObj);
-                }
-
-                vehiclesToRespawn.Remove(respawn); // done respawning
+                vehiclesToRespawn.Remove(respawn);
             }
+
 
 
             //Logic For Armory Heist
@@ -553,76 +644,81 @@ namespace moreammunation
             }
             foreach (var pair in heistActive.ToList())
             {
-                if (pair.Value) // heist is active
+                ArmoryZone zone = pair.Key;
+                bool isActive = pair.Value;
+
+                if (!isActive) continue; // skip inactive heists
+
+                Vehicle playerVehicle = nearestArmoryVehicle;
+
+                // Check if vehicle exists and is not destroyed
+                if (playerVehicle != null && playerVehicle.Exists() && !playerVehicle.IsDead)
                 {
-                    Vehicle playerVehicle = nearestArmoryVehicle;
-                    if (playerVehicle != null && playerVehicle.Exists())
+                    float distanceToTarget = playerVehicle.Position.DistanceTo(heistTarget);
+
+                    if (distanceToTarget < 8.0f) // Heist success radius
                     {
-                        float distanceToTarget = playerVehicle.Position.DistanceTo(heistTarget);
-                        if (distanceToTarget < 8.0f) // arrival radius
+                        // Reward player
+                        Game.Player.Money += zone.HeistReward;
+                        GTA.UI.Notification.Show($"~g~Heist complete! You earned ${zone.HeistReward:N0}.");
+                        Game.Player.WantedLevel = 0;
+
+                        // Make player leave vehicle
+                        if (Game.Player.Character.IsInVehicle())
+                            Game.Player.Character.Task.LeaveVehicle(playerVehicle, LeaveVehicleFlags.None);
+
+                        // Stop and lock vehicle
+                        playerVehicle.Speed = 0f;
+                        playerVehicle.Velocity = Vector3.Zero;
+                        playerVehicle.IsDriveable = false;
+                        playerVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                        playerVehicle.AreBrakeLightsOn = true;
+
+                        // Mark heist as complete
+                        heistActive[zone] = false;
+
+                        // Queue respawn
+                        vehiclesToRespawn.Add(new VehicleRespawn
                         {
-                            int reward = pair.Key.HeistReward;
-                            Game.Player.Money += reward;
-                            GTA.UI.Notification.Show($"~g~Heist complete! You earned ${reward:N0}.");
-                            Game.Player.WantedLevel = 0;
-                            if (Game.Player.Character.IsInVehicle())
-                            {
-                                Game.Player.Character.Task.LeaveVehicle(playerVehicle, LeaveVehicleFlags.None);
-                            }
-                            nearestArmoryVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
-                            nearestArmoryVehicle.IsDriveable = false;
+                            Zone = zone,
+                            Vehicle = playerVehicle,
+                            RespawnTime = DateTime.Now.AddSeconds(10)
+                        });
 
-                            if (playerVehicle != null && playerVehicle.Exists())
-                            {
-                                // Stop the vehicle instantly
-                                playerVehicle.Speed = 0f;
-                                playerVehicle.Velocity = Vector3.Zero;           // completely nullifies movement
-                                playerVehicle.IsDriveable = false;              // optional: prevent AI or player from moving
-                                playerVehicle.AreBrakeLightsOn = true;               // optional: visually shows brakes applied
+                        // Queue deletion
+                        vehiclesToDelete.Add((playerVehicle, DateTime.Now.AddSeconds(5)));
 
-                                // Make player leave the vehicle
-                                if (Game.Player.Character.IsInVehicle())
-                                    Game.Player.Character.Task.LeaveVehicle(playerVehicle, LeaveVehicleFlags.None);
-
-                                // Lock the vehicle
-                                nearestArmoryVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
-                            }
-                            heistActive[pair.Key] = false; // mark as done
-
-                            // Queue respawn back at the original zone
-                            ArmoryZone zone = pair.Key;
-                            vehiclesToRespawn.Add(new VehicleRespawn
-                            {
-                                Zone = zone,
-                                RespawnTime = DateTime.Now.AddSeconds(10)
-                            });
-
-                            // Queue vehicle for deletion after 5 seconds
-                            vehiclesToDelete.Add((nearestArmoryVehicle, DateTime.Now.AddSeconds(5)));
-
-                            // Remove delivery blip
-                            if (heistBlip != null && heistBlip.Exists())
-                            {
-                                heistBlip.Delete();
-                                heistBlip = null;
-                            }
-                            // 2️⃣ Delayed vehicle deletion (runs every tick)
-                            for (int i = vehiclesToDelete.Count - 1; i >= 0; i--)
-                            {
-                                var (veh, deleteAt) = vehiclesToDelete[i];
-                                if (DateTime.Now >= deleteAt)
-                                {
-                                    if (veh != null && veh.Exists())
-                                        veh.Delete(); // Instantly disappears
-
-                                    vehiclesToDelete.RemoveAt(i);
-                                }
-                            }
-
-
-
+                        // Remove delivery blip
+                        if (heistBlip != null && heistBlip.Exists())
+                        {
+                            heistBlip.Delete();
+                            heistBlip = null;
                         }
                     }
+                }
+                else // Vehicle destroyed or null
+                {
+                    GTA.UI.Notification.Show("~r~Heist Failed! The cargo was damaged.");
+                    heistActive[zone] = false;
+                }
+
+                // Player dead failure
+                if (Game.Player.IsDead)
+                {
+                    GTA.UI.Notification.Show("~r~Heist Failed! You died.");
+                    heistActive[zone] = false;
+                }
+            }
+
+            // Process delayed vehicle deletions
+            for (int i = vehiclesToDelete.Count - 1; i >= 0; i--)
+            {
+                var (veh, deleteAt) = vehiclesToDelete[i];
+                if (DateTime.Now >= deleteAt)
+                {
+                    if (veh != null && veh.Exists())
+                        veh.Delete();
+                    vehiclesToDelete.RemoveAt(i);
                 }
             }
 
@@ -633,71 +729,8 @@ namespace moreammunation
             // Process LemonUI menu pool
             pool.Process();
         }
+
         
-        private void OnKeyUp(object sender, KeyEventArgs e)
-        {
-            if (Game.Player.Character.IsOnFoot && isNearArmoryZone)
-            {
-                // Open armory menu
-                if (e.KeyCode == enable)
-                {
-                    armoryMenu.Visible = !armoryMenu.Visible;
-                }
-
-                // Start heist (wanted level)
-                if (e.KeyCode == heistKey && nearestArmoryVehicle != null)
-                {
-                    Game.Player.WantedLevel = 3; // Safe, instant
-                    GTA.UI.Notification.Show("~r~Heist started! Wanted level set to 3 stars.");
-
-                    // Unlock the vehicle so the player can enter
-                    nearestArmoryVehicle.LockStatus = VehicleLockStatus.Unlocked;
-                    nearestArmoryVehicle.IsDriveable = true;
-                    Function.Call(Hash.TASK_ENTER_VEHICLE,
-                        Game.Player.Character.Handle,        // Ped handle
-                        nearestArmoryVehicle.Handle,         // Vehicle handle
-                        -1,                                  // Timeout (-1 = infinite)
-                        -1,                                  // Seat index (-1 = driver)
-                        2.0f,                                // Speed
-                        1,                                   // Flag (1 = normal entry)
-                        0                                    // p6 (unused)
-                    );
-                    Function.Call(Hash.SET_VEHICLE_DOOR_SHUT, nearestArmoryVehicle.Handle, 5, false);
-
-                    // Find which armory zone we are near
-                    ArmoryZone currentZone = armoryZones.FirstOrDefault(z =>
-                        nearestArmoryVehicle.Model.Hash == new Model(z.VehicleName).Hash
-                    );
-
-                    
-
-                    if (e.KeyCode == heistKey && isNearArmoryZone && nearestArmoryVehicle != null)
-                    {
-                        if (!heistActive.ContainsKey(currentZone)) // make sure a heist isn’t already active
-                        {
-                            heistActive[currentZone] = true;
-
-                            // Set waypoint to Sandy Shores Airfield
-                            if (heistBlip != null && heistBlip.Exists())
-                                heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
-
-                            // Store this as a field if you want to remove it later
-                            heistBlip = World.CreateBlip(heistTarget);
-                            heistBlip.Sprite = BlipSprite.Standard;
-                            heistBlip.Color = BlipColor.Yellow;
-                            heistBlip.Name = "Delivery Point";
-                            heistBlip.ShowRoute = true;               // THIS makes the GPS line appear
-
-
-                            GTA.UI.Notification.Show($"~r~Heist started! Deliver the vehicle to Sandy Shores Airfield.");
-                        }
-                    }
-                }
-
-                
-            }
-        }
-
         private void LoadarmoryZonePositions()
         {
             int zoneIndex = 1;
@@ -796,11 +829,11 @@ namespace moreammunation
 
                         Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
                         vehicleBlips.Add(vehicle, vehicleBlipObj);
+                        vehicleZoneMapping[vehicle] = zone;
 
 
-                
                     }
-                    
+
                     else
                     {
                         Notification.Show($"~r~Failed to load {zone.VehicleName}");
@@ -819,7 +852,7 @@ namespace moreammunation
             }
         }
 
-         public Main()
+        public Main()
         {
 
             Tick += OnTick;
@@ -852,7 +885,7 @@ namespace moreammunation
             // Vehicle spawn settings
             bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "DeliveryVehicle", true);
             string vehicleName = config.GetValue<string>("VehicleOptions", "VehicleName", "mule");
-            
+
 
             GTA.UI.Notification.Show("Armory script loaded, waiting to create blips...");
 
