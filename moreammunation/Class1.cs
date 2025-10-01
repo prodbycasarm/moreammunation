@@ -338,7 +338,7 @@ namespace moreammunation
         private List<VehicleRespawn> vehiclesToRespawn = new List<VehicleRespawn>();
         private float armoryZoneRadius = 6.0f;
         private bool zonesCreated = false;
-        private Vehicle nearestArmoryVehicle = null;
+        private Vehicle vehicle = null;
 
         //HEIST
         private Blip heistBlip = null;
@@ -351,6 +351,19 @@ namespace moreammunation
         private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
         private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
         private Dictionary<Vehicle, ArmoryZone> vehicleZoneMapping = new Dictionary<Vehicle, ArmoryZone>();
+        private Vehicle activeHeistVehicle = null;
+        private bool AnyHeistActive()
+        {
+            bool active = heistActive.Values.Any(h => h);
+
+            // If no heist active but cooldown not finished, treat as active
+            if (!active && (DateTime.Now - lastHeistEndTime) < heistCooldown)
+                return true;
+
+            return active;
+        }
+        private DateTime lastHeistEndTime = DateTime.MinValue;
+        private readonly TimeSpan heistCooldown = TimeSpan.FromSeconds(11);
 
         // Config and key settings
         ScriptSettings config;
@@ -391,71 +404,79 @@ namespace moreammunation
         }
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
-            if (Game.Player.Character.IsOnFoot && isNearArmoryZone)
+            if (!Game.Player.Character.IsOnFoot || !isNearArmoryZone)
+                return;
+
+            // Block actions if any heist is active OR cooldown is active
+            if (AnyHeistActive())
             {
-                // Open armory menu
                 if (e.KeyCode == enable)
                 {
-                    armoryMenu.Visible = !armoryMenu.Visible;
-                }
 
-                // Start heist (wanted level)
-                if (e.KeyCode == heistKey && nearestArmoryVehicle != null)
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~Armory is unavailable right now", true, false);
+                }
+                else if (e.KeyCode == heistKey)
                 {
-                    Game.Player.WantedLevel = 3; // Safe, instant
-                    GTA.UI.Notification.Show("~r~Heist started! Wanted level set to 3 stars.");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You cannot start another heist yet!", true, false);
+                }
+                return;
+            }
 
-                    // Unlock the vehicle so the player can enter
-                    nearestArmoryVehicle.LockStatus = VehicleLockStatus.Unlocked;
-                    nearestArmoryVehicle.IsDriveable = true;
-                    Function.Call(Hash.TASK_ENTER_VEHICLE,
-                        Game.Player.Character.Handle,        // Ped handle
-                        nearestArmoryVehicle.Handle,         // Vehicle handle
-                        -1,                                  // Timeout (-1 = infinite)
-                        -1,                                  // Seat index (-1 = driver)
-                        2.0f,                                // Speed
-                        1,                                   // Flag (1 = normal entry)
-                        0                                    // p6 (unused)
-                    );
-                    Function.Call(Hash.SET_VEHICLE_DOOR_SHUT, nearestArmoryVehicle.Handle, 5, false);
+            // Open armory menu
+            if (e.KeyCode == enable)
+            {
+                armoryMenu.Visible = !armoryMenu.Visible;
+            }
 
-                    // Find which armory zone we are near
-                    if (!vehicleZoneMapping.TryGetValue(nearestArmoryVehicle, out ArmoryZone currentZone))
-                    {
-                        GTA.UI.Notification.Show("~r~Error: Could not determine vehicle zone!");
-                        return;
-                    }
+            // Start heist (wanted level)
+            if (e.KeyCode == heistKey && vehicle != null)
+            {
+                Game.Player.WantedLevel = 3; // Safe, instant
+                
+                // Unlock the vehicle so the player can enter
+                vehicle.LockStatus = VehicleLockStatus.Unlocked;
+                vehicle.IsDriveable = true;
+                Function.Call(Hash.TASK_ENTER_VEHICLE,
+                    Game.Player.Character.Handle,
+                    vehicle.Handle,
+                    -1,   // Timeout (-1 = infinite)
+                    -1,   // Seat index (-1 = driver)
+                    2.0f, // Speed
+                    1,    // Flag (1 = normal entry)
+                    0     // p6 (unused)
+                );
+                Function.Call(Hash.SET_VEHICLE_DOOR_SHUT, vehicle.Handle, 5, false);
 
-
-
-
-                    if (e.KeyCode == heistKey && isNearArmoryZone && nearestArmoryVehicle != null)
-                    {
-                        if (!heistActive.ContainsKey(currentZone)) // make sure a heist isn’t already active
-                        {
-                            heistActive[currentZone] = true;
-
-                            // Set waypoint to Sandy Shores Airfield
-                            if (heistBlip != null && heistBlip.Exists())
-                                heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
-
-                            // Store this as a field if you want to remove it later
-                            heistBlip = World.CreateBlip(heistTarget);
-                            heistBlip.Sprite = BlipSprite.Standard;
-                            heistBlip.Color = BlipColor.Yellow;
-                            heistBlip.Name = "Delivery Point";
-                            heistBlip.ShowRoute = true;               // THIS makes the GPS line appear
-
-
-                            GTA.UI.Notification.Show($"~r~Heist started! Deliver the vehicle to Sandy Shores Airfield.");
-                        }
-                    }
+                // Determine the current armory zone
+                if (!vehicleZoneMapping.TryGetValue(vehicle, out ArmoryZone currentZone))
+                {
+                    GTA.UI.Notification.Show("~r~Error: Could not determine vehicle zone!");
+                    return;
                 }
 
+                activeHeistVehicle = vehicle;
 
+                if (!heistActive.ContainsKey(currentZone) || !heistActive[currentZone])
+                {
+                    heistActive[currentZone] = true;
+
+                    // Delete old blip if it exists
+                    if (heistBlip != null && heistBlip.Exists())
+                        heistBlip.Delete();
+
+                    // Create new delivery blip
+                    heistBlip = World.CreateBlip(heistTarget);
+                    heistBlip.Sprite = BlipSprite.Standard;
+                    heistBlip.Color = BlipColor.Yellow;
+                    heistBlip.Name = "Delivery Point";
+                    heistBlip.ShowRoute = true;
+
+                    GTA.UI.Screen.ShowSubtitle("~g~ Heist started!~g~ ~w~ Deliver the weapons to the destination.", 5000);
+
+
+                }
             }
         }
-
         private void OnTick(object sender, EventArgs e)
         {
             // Request texture (optional, keep as is)
@@ -494,36 +515,14 @@ namespace moreammunation
             // Show notification if near a vehicle
             if (isNearArmoryZone && nearestVehicle != null && Game.Player.Character.IsOnFoot)
             {
-                // Buy/modify weapons notification
-                if (buyWeaponsNotification == -1)
+                // 🔒 Prevent help text if ANY heist is active
+                if (!AnyHeistActive())
                 {
-                    buyWeaponsNotification = GTA.UI.Notification.Show(
-                        $"~w~Press ~b~{enable}~w~ to buy/modify weapons"
-                    );
+                    // Buy/modify weapons help text
+                    GTA.UI.Screen.ShowHelpText($"~w~Press ~b~{enable}~w~ to buy or modify weapons, or press ~b~{heistKey}~w~ to rob the vehicle.", 3000);
                 }
+            }
 
-                // Heist notification
-                if (heistNotification == -1)
-                {
-                    heistNotification = GTA.UI.Notification.Show(
-                        $"~w~Press ~b~{heistKey}~w~ to rob the vehicle"
-                    );
-                }
-            }
-            else
-            {
-                // Hide notifications when leaving zone
-                if (buyWeaponsNotification != -1)
-                {
-                    GTA.UI.Notification.Hide(buyWeaponsNotification);
-                    buyWeaponsNotification = -1;
-                }
-                if (heistNotification != -1)
-                {
-                    GTA.UI.Notification.Hide(heistNotification);
-                    heistNotification = -1;
-                }
-            }
 
             // Logic for destroyed vehicles
             var toRemove = new List<Vehicle>();
@@ -646,10 +645,12 @@ namespace moreammunation
             {
                 ArmoryZone zone = pair.Key;
                 bool isActive = pair.Value;
-
+                
+                
                 if (!isActive) continue; // skip inactive heists
-
-                Vehicle playerVehicle = nearestArmoryVehicle;
+                
+                    
+                Vehicle playerVehicle = activeHeistVehicle;
 
                 // Check if vehicle exists and is not destroyed
                 if (playerVehicle != null && playerVehicle.Exists() && !playerVehicle.IsDead)
@@ -658,10 +659,14 @@ namespace moreammunation
 
                     if (distanceToTarget < 8.0f) // Heist success radius
                     {
+                        activeHeistVehicle = null;
                         // Reward player
                         Game.Player.Money += zone.HeistReward;
-                        GTA.UI.Notification.Show($"~g~Heist complete! You earned ${zone.HeistReward:N0}.");
+                        GTA.UI.Screen.ShowSubtitle($"~g~Heist Completed! ~w~You earned ~w~~b~${zone.HeistReward:N0}~b~.");
                         Game.Player.WantedLevel = 0;
+
+                        heistActive[zone] = false;
+                        
 
                         // Make player leave vehicle
                         if (Game.Player.Character.IsInVehicle())
@@ -676,7 +681,7 @@ namespace moreammunation
 
                         // Mark heist as complete
                         heistActive[zone] = false;
-
+                        lastHeistEndTime = DateTime.Now;
                         // Queue respawn
                         vehiclesToRespawn.Add(new VehicleRespawn
                         {
@@ -698,15 +703,27 @@ namespace moreammunation
                 }
                 else // Vehicle destroyed or null
                 {
-                    GTA.UI.Notification.Show("~r~Heist Failed! The cargo was damaged.");
+                    GTA.UI.Notification.Show("~r~Heist Failed! The Weapons Got Damaged.");
                     heistActive[zone] = false;
+                    activeHeistVehicle = null;
+                    if (heistBlip != null && heistBlip.Exists())
+                    {
+                        heistBlip.Delete();
+                        heistBlip = null;
+                    }
                 }
 
                 // Player dead failure
                 if (Game.Player.IsDead)
                 {
-                    GTA.UI.Notification.Show("~r~Heist Failed! You died.");
+                    GTA.UI.Notification.Show("~r~Heist Failed! You Got Wasted.");
                     heistActive[zone] = false;
+                    activeHeistVehicle = null;
+                    if (heistBlip != null && heistBlip.Exists())
+                    {
+                        heistBlip.Delete();
+                        heistBlip = null;
+                    }
                 }
             }
 
@@ -724,7 +741,7 @@ namespace moreammunation
 
 
             // Update the global reference to the nearest vehicle for OnKeyUp
-            nearestArmoryVehicle = nearestVehicle;
+            vehicle = nearestVehicle;
 
             // Process LemonUI menu pool
             pool.Process();
@@ -763,7 +780,15 @@ namespace moreammunation
                 zoneIndex++;
             }
 
-            Notification.Show($"~g~Loaded {armoryZones.Count} armory zones.");
+            GTA.UI.Notification.Show(
+                GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
+                "Ammunation",                               // sender name (shows above the subject)
+                "Ammunation +",                 // subject line
+                $"~w~Loaded ~b~{armoryZones.Count} ~w~new Ammunations on the map.", // message body
+                true,                                // fade in
+                false                                // blinking
+            );
+
         }
         private void CleanupExistingArmoryVehicles()
         {
@@ -865,14 +890,14 @@ namespace moreammunation
             if (!Enum.TryParse(enableKeyString, out enable))
             {
                 enable = Keys.Enter;
-                Notification.Show("Failed to parse key, using default 'Enter'");
+                GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"Failed to parse key, using default ~b~'Enter'", true, false);
             }
 
             string heistKeyString = config.GetValue<string>("Options", "HeistButton", "H"); // default H
             if (!Enum.TryParse(heistKeyString, out heistKey))
             {
                 heistKey = Keys.H; // fallback
-                GTA.UI.Notification.Show("Failed to parse heist key, using default 'H'");
+                GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"Failed to parse heist key, ~b~using default 'H'", true, false);
             }
 
 
@@ -887,14 +912,12 @@ namespace moreammunation
             string vehicleName = config.GetValue<string>("VehicleOptions", "VehicleName", "mule");
 
 
-            GTA.UI.Notification.Show("Armory script loaded, waiting to create blips...");
-
 
 
 
 
             // Initialize LemonUI components
-
+            
             pool = new ObjectPool();
             armoryMenu = new NativeMenu(
                 "",
@@ -907,6 +930,7 @@ namespace moreammunation
                     "ammunation_banner"
                 )
             );
+
             pool.Add(armoryMenu);
             Dictionary<WeaponComponentHash, string> chcustomComponentNames = new Dictionary<WeaponComponentHash, string>
                 {
@@ -946,7 +970,7 @@ namespace moreammunation
 
 
                 };
-
+            armoryMenu.Alignment = Alignment.Right;
             // Currently Held Weapon logic
             cHWeapon = new NativeMenu(
                 "",
@@ -960,6 +984,7 @@ namespace moreammunation
                 )
             );
             pool.Add(cHWeapon);
+            cHWeapon.Alignment = Alignment.Right;
             var cHWeaponItem = armoryMenu.AddSubMenu(cHWeapon);
             cHWeapon.Shown += (sender, args) =>
             {
@@ -969,7 +994,16 @@ namespace moreammunation
 
                 if (!WeaponValues.ContainsKey(heldWeaponHash))
                 {
-                    GTA.UI.Notification.Show("~y~You are not holding a supported weapon.");
+
+
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                        "Ammunation",                               // sender name (shows above the subject)
+                        "Important",                 // subject line
+                        $"~r~You are not holding a supported weapon.", // message body
+                        true,                                // fade in
+                        false                                // blinking
+                    );
                     return;
                 }
 
@@ -990,8 +1024,16 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(heldWeaponHash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~w~You don't own the ~b~{name}. ~w~Buy the weapon first.", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
                         return;
+
                     }
 
                     int ammoPrice = 70;
@@ -999,14 +1041,30 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~r~Not enough money! You need ~b~${ammoPrice}", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
+
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~w~You purchased ~b~{ammoAmount}~w~ rounds for ~r~-${ammoPrice}", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
+                   
                 };
                 // Full Refill Logic
                 buyFullAmmoItem.Activated += (s, a) =>
@@ -1016,7 +1074,14 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(heldWeaponHash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~r~You don't own the ~b~{name}. ~w~Buy the weapon first.", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
                         return;
                     }
 
@@ -1024,14 +1089,27 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~r~Not enough money!~w~ You need ~b~${refillPrice}", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
-
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~w~Fully refilled ammo for ~r~${refillPrice}", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
                 };
 
                 // SELL
@@ -1040,14 +1118,21 @@ namespace moreammunation
                 {
                     if (!weapons.HasWeapon(heldWeaponHash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~w~You don't own the ~b~{name}.", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
                         return;
                     }
 
                     weapons.Remove(heldWeaponHash);
                     Game.Player.Money += price;
 
-                    GTA.UI.Notification.Show($"~g~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Sold~b~ {name} for ~g~${price}", true, false);   
                     sellItem.Enabled = false;
                     sellItem.Description = "~c~You no longer own this weapon";
 
@@ -1066,6 +1151,7 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 // START HERE
 
                 customizeMenu.Shown += (s, e) =>
@@ -1073,7 +1159,7 @@ namespace moreammunation
                     if (!weapons.HasWeapon(heldWeaponHash))
                     {
                         customizeMenu.Visible = false;
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
@@ -1347,7 +1433,6 @@ namespace moreammunation
                 cHWeapon.Add(sellItem);
                 cHWeapon.AddSubMenu(customizeMenu);
 
-                GTA.UI.Notification.Show($"~g~Currently holding: {name}");
 
             };
 
@@ -1506,6 +1591,7 @@ namespace moreammunation
                 )
             );
             pool.Add(meleeSubMenu);
+            meleeSubMenu.Alignment = Alignment.Right;
             var meleeSubMenuItem = armoryMenu.AddSubMenu(meleeSubMenu);
             foreach (var melee in MeleeValues)
             {
@@ -1521,6 +1607,7 @@ namespace moreammunation
                 )
                 );
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
                 var buyItem = new NativeItem("Buy", $"Price: ${price}");
                 var sellItem = new NativeItem("Sell", $"Resell for ${price}");
@@ -1536,13 +1623,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
-
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equipped";
@@ -1559,13 +1646,22 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~r~You no longer own the ~b~{name}.", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
+                        
                     }
                 };
                 customizeMenu.Add(openCompMenuItem);
@@ -1575,7 +1671,15 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,         // portrait 
+                            "Ammunation",                               // sender name (shows above the subject)
+                            "Important",                 // subject line
+                            $"~r~You don't own the ~b~{name}.", // message body
+                            true,                                // fade in
+                            false                                // blinking
+                        );
+
                         return;
                     }
 
@@ -1661,19 +1765,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
 
                     equipItem.Enabled = false;
@@ -1693,13 +1797,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
 
 
@@ -1788,6 +1892,7 @@ namespace moreammunation
             );
 
             pool.Add(handgunsSubMenu);
+            handgunsSubMenu.Alignment = Alignment.Right;
             var handgunsSubMenuItem = armoryMenu.AddSubMenu(handgunsSubMenu);
 
             foreach (var handgun in HandgunsValues)
@@ -1805,6 +1910,7 @@ namespace moreammunation
                 ));
 
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -1832,13 +1938,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -1853,7 +1959,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
                     int ammoPrice = 70;
@@ -1861,14 +1967,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -1879,21 +1985,21 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
                     int refillPrice = 5000;
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
 
@@ -1904,19 +2010,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
 
@@ -1937,13 +2043,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
 
@@ -1976,13 +2082,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
 
@@ -2091,7 +2198,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -2571,6 +2678,7 @@ namespace moreammunation
             )
             );
             pool.Add(smgSubMenu);
+            smgSubMenu.Alignment = Alignment.Right;
             var smgSubMenuItem = armoryMenu.AddSubMenu(smgSubMenu);
 
 
@@ -2588,6 +2696,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -2606,13 +2715,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -2627,7 +2736,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -2636,14 +2745,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -2654,7 +2763,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -2662,14 +2771,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -2679,19 +2788,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -2713,13 +2822,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -2749,13 +2858,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
                 var excludedComponents = new HashSet<WeaponComponentHash>
@@ -2860,7 +2970,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -3384,6 +3494,7 @@ namespace moreammunation
                 )
                 );
             pool.Add(riflesSubMenu);
+            riflesSubMenu.Alignment = Alignment.Right;
             var riflesSubMenuItem = armoryMenu.AddSubMenu(riflesSubMenu);
 
             foreach (var handgun in RiflesValues)
@@ -3400,6 +3511,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -3418,13 +3530,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -3439,7 +3551,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -3448,14 +3560,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -3466,7 +3578,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -3474,14 +3586,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -3491,19 +3603,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -3525,13 +3637,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -3561,13 +3673,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
                 var excludedComponents = new HashSet<WeaponComponentHash>
@@ -3665,7 +3778,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -4158,6 +4271,7 @@ namespace moreammunation
                 )
                 );
             pool.Add(machinegunsSubMenu);
+            machinegunsSubMenu.Alignment = Alignment.Right;
             var machinegunsSubMenuItem = armoryMenu.AddSubMenu(machinegunsSubMenu);
 
 
@@ -4176,6 +4290,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -4194,13 +4309,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -4215,7 +4330,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -4224,14 +4339,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -4242,7 +4357,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -4250,14 +4365,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -4267,19 +4382,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -4301,13 +4416,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -4337,13 +4452,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
                 var excludedComponents = new HashSet<WeaponComponentHash>
@@ -4434,7 +4550,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -4930,6 +5046,7 @@ namespace moreammunation
                 )
                 );
             pool.Add(shotgunsSubMenu);
+            shotgunsSubMenu.Alignment = Alignment.Right;
             var shotgunsSubMenuItem = armoryMenu.AddSubMenu(shotgunsSubMenu);
 
 
@@ -4947,6 +5064,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -4965,13 +5083,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -4986,7 +5104,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -4995,14 +5113,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -5013,7 +5131,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -5021,14 +5139,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -5038,19 +5156,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -5072,13 +5190,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -5108,13 +5226,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
                 var excludedComponents = new HashSet<WeaponComponentHash>
@@ -5205,7 +5324,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -5698,6 +5817,7 @@ namespace moreammunation
                 )
                 );
             pool.Add(snipersSubMenu);
+            snipersSubMenu.Alignment = Alignment.Right;
             var snipersSubMenuItem = armoryMenu.AddSubMenu(snipersSubMenu);
 
 
@@ -5715,6 +5835,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -5733,13 +5854,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -5754,7 +5875,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -5763,14 +5884,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -5781,7 +5902,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -5789,14 +5910,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -5806,19 +5927,20 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~Not enough money! ~w~You need ~b~${price}", true, false);
+
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -5840,13 +5962,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -5876,13 +5998,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
                 var excludedComponents = new HashSet<WeaponComponentHash>
@@ -5979,7 +6102,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -6473,6 +6596,7 @@ namespace moreammunation
                 )
                 );
             pool.Add(heavyweaponSubMenu);
+            heavyweaponSubMenu.Alignment = Alignment.Right;
             var heavyweaponSubMenuItem = armoryMenu.AddSubMenu(heavyweaponSubMenu);
 
 
@@ -6490,6 +6614,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -6508,13 +6633,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -6529,7 +6654,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -6538,14 +6663,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -6556,7 +6681,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -6564,14 +6689,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -6581,19 +6706,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -6615,13 +6740,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -6651,13 +6776,14 @@ namespace moreammunation
                     )
                 );
                 pool.Add(customizeMenu);
+                customizeMenu.Alignment = Alignment.Right;
                 customizeMenu.Shown += (s, e) =>
                 {
                     if (!Game.Player.Character.Weapons.HasWeapon(hash))
                     {
                         customizeMenu.Visible = false;
                         weaponMenu.Visible = true;  // 👈 Show the weapon menu again
-                        GTA.UI.Notification.Show($"~r~You no longer own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Important", $"~r~You no longer own the {name}.", true, false);
                     }
                 };
                 var excludedComponents = new HashSet<WeaponComponentHash>
@@ -6754,7 +6880,7 @@ namespace moreammunation
 
                     if (!weapon.IsPresent)
                     {
-                        GTA.UI.Notification.Show($"~r~You need to own the {name} to customize it.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You need to own the ~b~{name} to customize it.", true, false);   
                         return;
                     }
 
@@ -7249,6 +7375,7 @@ namespace moreammunation
                 )
                 );
             pool.Add(throwableSubMenu);
+            throwableSubMenu.Alignment = Alignment.Right;
             var throwableSubMenuItem = armoryMenu.AddSubMenu(throwableSubMenu);
 
 
@@ -7266,6 +7393,7 @@ namespace moreammunation
                     "ammunation_banner"
                 ));
                 pool.Add(weaponMenu);
+                weaponMenu.Alignment = Alignment.Right;
                 var buyFullAmmoItem = new NativeItem("Buy All Ammo", "Buy ammunition for this weapon.");
                 var buyAmmoItem = new NativeItem("Buy Ammo", "Buy ammunition for this weapon.");
                 var equipItem = new NativeItem("Equip", $"Equiped ${price}");
@@ -7284,13 +7412,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Select(hash, true); // Equip the weapon
 
-                    GTA.UI.Notification.Show($"~g~Equipped {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~Equipped~b~ {name}", true, false);
 
                     equipItem.Enabled = false;
                     buyItem.Description = "~c~You already have this weapon equiped";
@@ -7305,7 +7433,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -7314,14 +7442,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < ammoPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${ammoPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${ammoPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= ammoPrice;
                     weapon.Ammo += ammoAmount;
 
-                    GTA.UI.Notification.Show($"~g~Purchased {ammoAmount} rounds for ${ammoPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Purchased~b~ {ammoAmount} ~w~rounds for ~r~${ammoPrice}", true, false);
                 };
 
                 // Full Refill Logic
@@ -7332,7 +7460,7 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}. Buy the weapon first.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You don't own the {name}. ~w~Buy the weapon first.", true, false);   
                         return;
                     }
 
@@ -7340,14 +7468,14 @@ namespace moreammunation
 
                     if (Game.Player.Money < refillPrice)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${refillPrice}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money! You need ${refillPrice}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= refillPrice;
                     weapon.Ammo = weapon.MaxAmmo;
 
-                    GTA.UI.Notification.Show($"~g~Fully refilled ammo for ${refillPrice}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Fully refilled ammo for ~r~${refillPrice}", true, false);
                 };
 
                 // Buy weapon logic
@@ -7357,19 +7485,19 @@ namespace moreammunation
 
                     if (weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~g~You already own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You already own the ~b~{name}.", true, false);   
                         return;
                     }
 
                     if (Game.Player.Money < price)
                     {
-                        GTA.UI.Notification.Show($"~r~Not enough money! You need ${price}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Insufficient Funds", $"~r~Not enough money!~w~ You need ~b~${price}", true, false);
                         return;
                     }
 
                     Game.Player.Money -= price;
                     weapons.Give(hash, 1, true, true);
-                    GTA.UI.Notification.Show($"~g~You purchased {name}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~You purchased ~g~{name}", true, false);
 
                     buyItem.Enabled = false;
                     buyItem.Description = "~c~You already own this weapon";
@@ -7391,13 +7519,13 @@ namespace moreammunation
 
                     if (!weapons.HasWeapon(hash))
                     {
-                        GTA.UI.Notification.Show($"~r~You don't own the {name}.");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~w~You don't own the ~b~{name}.", true, false);    
                         return;
                     }
 
                     weapons.Remove(hash);
                     Game.Player.Money += price;
-                    GTA.UI.Notification.Show($"~r~Sold {name} for ${price}");
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Receipt", $"~w~Sold {name} for ~g~${price}", true, false);
 
                     buyItem.Enabled = true;
                     buyItem.Description = $"Price: ${price}";
@@ -7584,13 +7712,27 @@ namespace moreammunation
 
                 if (weaponsToBuy.Count == 0)
                 {
-                    GTA.UI.Notification.Show("~g~You already own all weapons.");
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
+                        "Ammunation",                               // sender name (shows above the subject)
+                        "Ammunation +",                 // subject line
+                        $"~r~You already own all weapons.", // message body
+                        true,                                // fade in
+                        false                                // blinking
+                    );
                     return;
                 }
 
                 if (Game.Player.Money < totalCost)
                 {
-                    GTA.UI.Notification.Show($"~r~Not enough money! You need ~y~${totalCost}");
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
+                        "Ammunation",                               // sender name (shows above the subject)
+                        "Ammunation +",                 // subject line
+                        $"~r~Not enough money! ~w~You need ~y~${totalCost}", // message body
+                        true,                                // fade in
+                        false                                // blinking
+                    );
                     return;
                 }
 
@@ -7623,7 +7765,16 @@ namespace moreammunation
                     }
                 }
 
-                GTA.UI.Notification.Show($"~g~Purchased all weapons for ${totalCost}");
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
+                        "Ammunation",                               // sender name (shows above the subject)
+                        "Ammunation +",                 // subject line
+                        $"Purchased all weapons for ~r~ -${totalCost}", // message body
+                        true,                                // fade in
+                        false                                // blinking
+                    );
+                    return;
+
             }
             catch (Exception ex)
             {
@@ -7650,7 +7801,14 @@ namespace moreammunation
 
                 if (!hasWeapons)
                 {
-                    GTA.UI.Notification.Show("~r~You do not have any weapons!");
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
+                        "Ammunation",                               // sender name (shows above the subject)
+                        "Ammunation +",                 // subject line
+                        $"~r~You do not have any weapons!", // message body
+                        true,                                // fade in
+                        false                                // blinking
+                    );
                     return;
                 }
 
@@ -7687,7 +7845,15 @@ namespace moreammunation
                 }
 
                 Game.Player.Money += totalValue;
-                GTA.UI.Notification.Show($"~r~Sold all weapons for ${totalValue}");
+                
+                GTA.UI.Notification.Show(
+                    GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
+                    "Ammunation",                               // sender name (shows above the subject)
+                    "Ammunation +",                 // subject line
+                    $"~w~Sold all weapons for $~g~{totalValue}", // message body
+                    true,                                // fade in
+                    false                                // blinking
+                );
 
             }
             catch (Exception ex)
