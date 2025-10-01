@@ -42,7 +42,7 @@ namespace moreammunation
         //Dictionary For Weapons
         public Dictionary<WeaponHash, int> WeaponValues = new Dictionary<WeaponHash, int>
         {
-            // Melee
+            // Melee 
             { WeaponHash.Knife, 400 },
             { WeaponHash.Nightstick, 400 },
             { WeaponHash.Hammer, 500 },
