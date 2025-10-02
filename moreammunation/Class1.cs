@@ -905,7 +905,7 @@ namespace moreammunation
                     while (!pedModel.IsLoaded) Script.Yield();
                     Random rnd = new Random();
 
-
+                     
                     for (int i = 0; i < zone.NpcNumber; i++)
                     {
                         float offsetX = (float)(rnd.NextDouble() * 10.0 - 5.0);
