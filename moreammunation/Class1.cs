@@ -11,6 +11,7 @@ using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+
 using static System.Runtime.CompilerServices.RuntimeHelpers;
 
 
@@ -35,6 +36,11 @@ namespace moreammunation
         public string VehicleName { get; set; }
 
         public int HeistReward;
+        public bool SpawnNpc { get; set; }
+        public string NpcModel { get; set; }
+
+        public int NpcNumber { get; set; }
+
     }
 
     public class Main : Script
@@ -344,8 +350,6 @@ namespace moreammunation
         private Blip heistBlip = null;
         private bool cleanupDone = false;
         private Keys heistKey; // Key to start heist
-        private int buyWeaponsNotification = -1;
-        private int heistNotification = -1;
         private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
         private int lastWantedLevel = 0;
         private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
@@ -364,11 +368,26 @@ namespace moreammunation
         }
         private DateTime lastHeistEndTime = DateTime.MinValue;
         private readonly TimeSpan heistCooldown = TimeSpan.FromSeconds(11);
+        private Random rnd = new Random();
+        private List<Ped> spawnedPeds = new List<Ped>();
+
+        //NPC STUFF
+
 
         // Config and key settings
         ScriptSettings config;
         Keys enable;
-
+        private void CleanupExistingArmoryPeds()
+        {
+            foreach (var ped in spawnedPeds)
+            {
+                if (ped != null && ped.Exists())
+                {
+                    ped.Delete();
+                }
+            }
+            spawnedPeds.Clear();
+        }
         private void OnAborted(object sender, EventArgs e)
         {
             int vehicleCount = vehicleBlips.Count;
@@ -764,6 +783,10 @@ namespace moreammunation
                 string blipName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipName", $"Armory {zoneIndex}");
                 bool spawnVehicle = config.GetValue<bool>($"ArmoryZone{zoneIndex}", "DeliveryVehicle", true);
                 string vehicleName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "VehicleName", "mule");
+                bool spawnNpc = config.GetValue<bool>($"ArmoryZone{zoneIndex}", "SpawnNpc", true);
+                string npcName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "NpcName", "s_m_m_armoured_01");
+                int npcNumber = config.GetValue<int>($"ArmoryZone{zoneIndex}", "NpcNumber", 1);
+
 
                 armoryZones.Add(new ArmoryZone()
                 {
@@ -773,6 +796,9 @@ namespace moreammunation
                     BlipName = blipName,
                     SpawnVehicle = spawnVehicle,
                     VehicleName = vehicleName,
+                    SpawnNpc = spawnNpc,
+                    NpcModel = npcName,
+                    NpcNumber = npcNumber,
                     HeistReward = config.GetValue<int>($"ArmoryZone{zoneIndex}", "heistReward", 110000),
 
                 });
@@ -806,12 +832,17 @@ namespace moreammunation
 
             vehicleBlips.Clear();
             vehiclesToRespawn.Clear();
+
+            
         }
 
         private void CreatearmoryZoneBlips()
         {
+            
             foreach (var zone in armoryZones)
             {
+
+ 
                 if (zone.SpawnVehicle)
                 {
                     // --- Spawn vehicle ---
@@ -861,10 +892,85 @@ namespace moreammunation
 
                     else
                     {
-                        Notification.Show($"~r~Failed to load {zone.VehicleName}");
+                        GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~Failed to load {zone.VehicleName}", true, false);
+
                     }
 
                 }
+                
+                if (zone.SpawnNpc)
+                {
+                    Model pedModel = new Model(zone.NpcModel);
+                    pedModel.Request(500);
+                    while (!pedModel.IsLoaded) Script.Yield();
+                    Random rnd = new Random();
+
+
+                    for (int i = 0; i < zone.NpcNumber; i++)
+                    {
+                        float offsetX = (float)(rnd.NextDouble() * 10.0 - 5.0);
+                        float offsetY = (float)(rnd.NextDouble() * 10.0 - 5.0);
+
+                        Vector3 basePosition = vehicle != null ? vehicle.Position : zone.Position;
+
+                        // Get actual ground height at this X/Y
+                        float groundZ = World.GetGroundHeight(basePosition);
+
+                        Vector3 npcPosition = new Vector3(
+                            basePosition.X + offsetX,
+                            basePosition.Y + offsetY,
+                            groundZ
+                        );
+
+                        Ped npc = World.CreatePed(pedModel, npcPosition);
+                        npc.IsPersistent = true;
+                        spawnedPeds.Add(npc);
+
+
+                        var allWeapons = new List<WeaponHash>();
+                        allWeapons.AddRange(HandgunsValues.Keys);
+                        allWeapons.AddRange(SMGsValues.Keys);
+                        allWeapons.AddRange(RiflesValues.Keys);
+                        allWeapons.AddRange(MachineGunsValues.Keys);
+                        allWeapons.AddRange(ShotgunsValues.Keys);
+
+                        // Pick a random weapon from the combined list
+
+                        WeaponHash randomWeapon = allWeapons[rnd.Next(allWeapons.Count)];
+
+                        int ammo = 100; // default ammo
+                        if (HandgunsValues.ContainsKey(randomWeapon))
+                            ammo = HandgunsValues[randomWeapon] / 10;
+                        else if (SMGsValues.ContainsKey(randomWeapon))
+                            ammo = SMGsValues[randomWeapon] / 10;
+                        else if (RiflesValues.ContainsKey(randomWeapon))
+                            ammo = RiflesValues[randomWeapon] / 10;
+                        else if (MachineGunsValues.ContainsKey(randomWeapon))
+                            ammo = MachineGunsValues[randomWeapon] / 10;
+                        else if (ShotgunsValues.ContainsKey(randomWeapon))
+                            ammo = ShotgunsValues[randomWeapon] / 10;
+
+                        // Weapons
+                        npc.Weapons.Give(randomWeapon, ammo, true, true);
+                        npc.CanSwitchWeapons = true;
+
+                        // Relationship & AI setup
+                        npc.RelationshipGroup = RelationshipGroupHash.Army;
+                        Function.Call(Hash.SET_PED_AS_ENEMY, npc.Handle, true);
+                        Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, npc.Handle, 46, true); // Use vehicles
+                        Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, npc.Handle, 5, true);  // Aggressive
+                        Function.Call(Hash.SET_PED_ACCURACY, npc.Handle, 50);
+
+                        // Guard or wander near the vehicle
+
+                        Function.Call(Hash.TASK_WANDER_IN_AREA, npc.Handle, npcPosition.X, npcPosition.Y, npcPosition.Z, 2.0f, 1.0f, 1.0f);
+                    }
+
+                    
+                }
+
+
+
                 else
                 {
                     // --- Create static zone blip ---
@@ -903,21 +1009,12 @@ namespace moreammunation
 
             LoadarmoryZonePositions(); // Only loads coordinates
 
-            string blipSpriteString = config.GetValue<string>("Blip", "Sprite", "ammunation");
-            string blipColorString = config.GetValue<string>("Blip", "Color", "BlueLight");
-            string blipName = config.GetValue<string>("Blip", "Name", "Armoury");
-
-            // Vehicle spawn settings
-            bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "DeliveryVehicle", true);
-            string vehicleName = config.GetValue<string>("VehicleOptions", "VehicleName", "mule");
-
-
-
+            
 
 
 
             // Initialize LemonUI components
-            
+
             pool = new ObjectPool();
             armoryMenu = new NativeMenu(
                 "",
