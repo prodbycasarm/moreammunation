@@ -376,6 +376,8 @@ namespace moreammunation
         private List<PedRespawn> pedsToRespawn = new List<PedRespawn>();
         // Track dead peds and their cleanup times
         private List<(Ped ped, DateTime deleteAt)> pedsPendingDeletion = new List<(Ped, DateTime)>();
+        private DateTime lastDeathTime = DateTime.MinValue;
+        private bool wasPlayerDead = false;
 
         private class PedRespawn
         {
@@ -540,9 +542,38 @@ namespace moreammunation
 
 
 
+            // Detect player death / respawn safely
+            // Detect player death and respawn
+            if (Game.Player.IsDead && !wasPlayerDead)
+            {
+                // Mark as dead once
+                wasPlayerDead = true;
+            }
+            else if (!Game.Player.IsDead && wasPlayerDead)
+            {
+                // Player just respawned (was dead before, now alive)
+                wasPlayerDead = false;
+
+                // Delay a bit to let world load
+                GTA.Script.Wait(2000);
+
+                // Now safely clean up and respawn everything
+                pedZoneMapping.Clear();
+                pedsToRespawn.Clear();
+                pedsPendingDeletion.Clear();
+                spawnedPeds.Clear();
+
+                vehicleZoneMapping.Clear();
+                vehicleBlips.Clear();
+                vehiclesToRespawn.Clear();
+                vehiclesToDelete.Clear();
+
+                CleanupExistingArmoryEntities();
+                CreatearmoryZoneBlips();
+            }
 
 
-            
+
             // Ped Respawn Logic
             var deadPeds = new List<Ped>();
 
@@ -577,6 +608,8 @@ namespace moreammunation
                     // Schedule deletion 5 seconds later
                     pedsPendingDeletion.Add((ped, DateTime.Now.AddSeconds(5)));
                 }
+
+                
 
                 pedZoneMapping.Remove(ped);
                 spawnedPeds.Remove(ped);
@@ -780,7 +813,7 @@ namespace moreammunation
                         playerVehicle.IsDriveable = false;
                         playerVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
                         playerVehicle.AreBrakeLightsOn = true;
-
+                        
                         // Mark heist as complete
                         heistActive[zone] = false;
                         lastHeistEndTime = DateTime.Now;
@@ -1028,12 +1061,17 @@ namespace moreammunation
                         Vector3 basePosition = vehicle != null ? vehicle.Position : zone.Position;
 
                         // Get actual ground height at this X/Y
-                        float groundZ = World.GetGroundHeight(basePosition);
+                        float groundZ;
+                        if (!World.GetGroundHeight(basePosition, out groundZ))
+                        {
+                            groundZ = basePosition.Z; // fallback
+                        }
 
+                        // Spawn a bit higher to avoid clipping or null ground height
                         Vector3 npcPosition = new Vector3(
                             basePosition.X + offsetX,
                             basePosition.Y + offsetY,
-                            groundZ
+                            groundZ + 1.0f // spawn 1m above ground
                         );
 
                         Ped npc = World.CreatePed(pedModel, npcPosition);
@@ -1067,6 +1105,7 @@ namespace moreammunation
                         // Weapons
                         npc.Weapons.Give(randomWeapon, ammo, true, true);
                         npc.CanSwitchWeapons = true;
+
 
                         // Relationship & AI setup
                         npc.RelationshipGroup = RelationshipGroupHash.Army;
