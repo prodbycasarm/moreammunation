@@ -378,6 +378,7 @@ namespace moreammunation
         private List<(Ped ped, DateTime deleteAt)> pedsPendingDeletion = new List<(Ped, DateTime)>();
         private DateTime lastDeathTime = DateTime.MinValue;
         private bool wasPlayerDead = false;
+        private Dictionary<Ped, Blip> hostilePedBlips = new Dictionary<Ped, Blip>();
 
         private class PedRespawn
         {
@@ -419,6 +420,45 @@ namespace moreammunation
             }
             spawnedPeds.Clear();
         }
+        private void AggroPedsInZone(ArmoryZone zone)
+        {
+            foreach (var pair in pedZoneMapping)
+            {
+                Ped ped = pair.Key;
+                ArmoryZone pedZone = pair.Value;
+
+                if (ped != null && ped.Exists() && !ped.IsDead && pedZone == zone)
+                {
+                    // Make ped hostile
+                    ped.RelationshipGroup = RelationshipGroupHash.Army;
+                    Function.Call(Hash.SET_PED_AS_ENEMY, ped.Handle, true);
+                    Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped.Handle, 46, true);
+                    Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped.Handle, 5, true);
+                    Function.Call(Hash.SET_PED_ACCURACY, ped.Handle, 50);
+
+                    // Give them a weapon if they don’t have one
+                    if (ped.Weapons.Current.Hash == WeaponHash.Unarmed)
+                    {
+                        ped.Weapons.Give(WeaponHash.MicroSMG, 100, true, true);
+                    }
+
+                    // Assign combat task
+                    Function.Call(Hash.TASK_COMBAT_PED, ped.Handle, Game.Player.Character.Handle, 0, 16);
+
+                    // Add blip if not already present
+                    if (!hostilePedBlips.ContainsKey(ped))
+                    {
+                        Blip pedBlip = ped.AddBlip();
+                        pedBlip.Color = BlipColor.Red;
+                        pedBlip.Scale = 0.8f;
+                        pedBlip.IsShortRange = false;
+                        pedBlip.Name = "Ammunation Guards";
+                        Function.Call(Hash.SET_BLIP_AS_FRIENDLY, pedBlip.Handle, false);
+                        hostilePedBlips[ped] = pedBlip;
+                    }
+                }
+            }
+        }
 
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
@@ -431,11 +471,11 @@ namespace moreammunation
                 if (e.KeyCode == enable)
                 {
 
-                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.DetonateBomb, "Ammunation", "Alert", $"~r~Armory is unavailable right now", true, false);
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~Armory is unavailable right now", true, false);
                 }
                 else if (e.KeyCode == heistKey)
                 {
-                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You cannot start another heist yet!", true, false);
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.MpArmyContact, "Agent Steele", "Alert", $"~r~You haven't finished the current heist yet!", true, false);
                 }
                 return;
             }
@@ -477,7 +517,7 @@ namespace moreammunation
                 if (!heistActive.ContainsKey(currentZone) || !heistActive[currentZone])
                 {
                     heistActive[currentZone] = true;
-
+                    AggroPedsInZone(currentZone);
                     // Delete old blip if it exists
                     if (heistBlip != null && heistBlip.Exists())
                         heistBlip.Delete();
@@ -490,6 +530,15 @@ namespace moreammunation
                     heistBlip.ShowRoute = true;
 
                     GTA.UI.Screen.ShowSubtitle("~g~ Heist started!~g~ ~w~ Deliver the weapons to the destination.", 5000);
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "Ammu-Nation +",
+                        "~w~Great job, hotshot. But the stolen weapons just got flagged on the radar.~n~Haul them to the drop — I’ll handle the heat when you arrive. Don’t screw it up.",
+                        true,
+                        false
+                    );
+
 
 
                 }
@@ -568,6 +617,14 @@ namespace moreammunation
                 vehiclesToRespawn.Clear();
                 vehiclesToDelete.Clear();
 
+                foreach (var blip in hostilePedBlips.Values)
+                {
+                    if (blip.Exists())
+                        blip.Delete();
+                }
+                hostilePedBlips.Clear();
+
+
                 CleanupExistingArmoryEntities();
                 CreatearmoryZoneBlips();
             }
@@ -630,8 +687,8 @@ namespace moreammunation
                 while (!pedModel.IsLoaded) Script.Yield();
 
                 Random rnd = new Random();
-                float offsetX = (float)(rnd.NextDouble() * 10.0 - 5.0);
-                float offsetY = (float)(rnd.NextDouble() * 10.0 - 5.0);
+                float offsetX = (float)(rnd.NextDouble() * 20.0 - 15.0);
+                float offsetY = (float)(rnd.NextDouble() * 20.0 - 15.0);
 
                 Vector3 basePosition = zone.Position;
                 float groundZ = World.GetGroundHeight(basePosition);
@@ -667,10 +724,64 @@ namespace moreammunation
                 Function.Call(Hash.SET_PED_ACCURACY, newPed.Handle, 50);
                 Function.Call(Hash.TASK_WANDER_IN_AREA, newPed.Handle, npcPosition.X, npcPosition.Y, npcPosition.Z, 3.0f, 3.0f, 3.0f);
 
+                // 🗺️ Add blip for aggressive ped
+                newPed.RelationshipGroup = RelationshipGroupHash.Army;
+                Function.Call(Hash.SET_PED_AS_ENEMY, newPed.Handle, true);
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, newPed.Handle, 46, true);
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, newPed.Handle, 5, true);
+                Function.Call(Hash.SET_PED_ACCURACY, newPed.Handle, 50);
+                Function.Call(Hash.TASK_WANDER_IN_AREA, newPed.Handle, npcPosition.X, npcPosition.Y, npcPosition.Z, 3.0f, 3.0f, 3.0f);
+
+                // Store reference if you need to remove later
                 
+
                 pedsToRespawn.Remove(respawn);
             }
-            
+
+            foreach (var ped in spawnedPeds.ToList())
+            {
+                // Skip missing/dead peds
+                if (ped == null || !ped.Exists() || ped.IsDead)
+                {
+                    if (hostilePedBlips.ContainsKey(ped))
+                    {
+                        hostilePedBlips[ped].Delete();
+                        hostilePedBlips.Remove(ped);
+                    }
+                    continue;
+                }
+
+                // Check aggression
+                bool isAggressive =
+                    Function.Call<bool>(Hash.IS_PED_IN_COMBAT, ped.Handle, Game.Player.Character.Handle) ||
+                    Function.Call<bool>(Hash.HAS_PED_RECEIVED_EVENT, ped.Handle, 75); // PED_AGGRO event
+
+                if (isAggressive)
+                {
+                    // Add blip if not already added
+                    if (!hostilePedBlips.ContainsKey(ped))
+                    {
+                        Blip pedBlip = ped.AddBlip();
+                        pedBlip.Color = BlipColor.Red;
+                        pedBlip.Scale = 0.8f;
+                        pedBlip.IsShortRange = false;
+                        pedBlip.Name = "Ammunation Guards";
+                        Function.Call(Hash.SET_BLIP_AS_FRIENDLY, pedBlip.Handle, false);
+
+                        hostilePedBlips[ped] = pedBlip;
+                    }
+                }
+                else
+                {
+                    // Remove blip if ped calms down
+                    if (hostilePedBlips.ContainsKey(ped))
+                    {
+                        hostilePedBlips[ped].Delete();
+                        hostilePedBlips.Remove(ped);
+                    }
+                }
+            }
+
 
 
 
@@ -799,7 +910,17 @@ namespace moreammunation
 
                         // Reward player
                         Game.Player.Money += zone.HeistReward;
-                        GTA.UI.Screen.ShowSubtitle($"~g~Heist Completed! ~w~You earned ~w~~b~${zone.HeistReward:N0}~b~.");
+
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "Important",
+                            $"~g~Heist Completed! ~w~Your cut: ~b~${zone.HeistReward:N0}~w~.~n~I’ve got other shipments for you… stay sharp.",
+                            true,
+                            false
+                        );
+
+
                         Game.Player.WantedLevel = 0;
                         heistActive[zone] = false;
 
@@ -838,7 +959,14 @@ namespace moreammunation
                 }
                 else // Vehicle destroyed or null
                 {
-                    GTA.UI.Notification.Show("~r~Heist Failed! The Weapons Got Damaged.");
+                    GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "Important",
+                            $"~r~Heist Failed! The Weapons Got Damaged.",
+                            true,
+                            false
+                        );
                     heistActive[zone] = false;
                     activeHeistVehicle = null;
                     if (heistBlip != null && heistBlip.Exists())
@@ -851,7 +979,15 @@ namespace moreammunation
                 // Player dead failure
                 if (Game.Player.IsDead)
                 {
-                    GTA.UI.Notification.Show("~r~Heist Failed! You Got Wasted.");
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",                               
+                        "Important",                 
+                        $"~r~Heist Failed! You Got Wasted.", 
+                        true,                                
+                        false                                
+                    );
+
                     heistActive[zone] = false;
                     activeHeistVehicle = null;
                     if (heistBlip != null && heistBlip.Exists())
@@ -937,13 +1073,24 @@ namespace moreammunation
             }
 
             GTA.UI.Notification.Show(
-                GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
-                "Ammunation",                               // sender name (shows above the subject)
-                "Ammunation +",                 // subject line
-                $"~w~Loaded ~b~{armoryZones.Count} ~w~new Ammunations on the map.", // message body
-                true,                                // fade in
-                false                                // blinking
+                GTA.UI.NotificationIcon.Ammunation,         
+                "Ammunation",                               
+                "Ammunation +",                
+                $"~w~Loaded ~b~{armoryZones.Count} ~w~new Ammunations on the map.", 
+                true,                                
+                false                                
             );
+
+            GTA.UI.Notification.Show(
+                GTA.UI.NotificationIcon.MpArmyContact,
+                "Agent Steele",
+                "Ammu-Nation +",
+                "~w~Hey, Agent Steele here.~n~I’ve got a heist that might interest you.~n~There’s an arms drop at the new Ammu-Nations on the map.~n~Let me know when you’re ready to make some real money.",
+                true,
+                false
+            );
+
+
 
         }
         private void CleanupExistingArmoryEntities()
