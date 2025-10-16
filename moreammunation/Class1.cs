@@ -11,6 +11,7 @@ using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using iFruitAddon2;
 
 using static System.Runtime.CompilerServices.RuntimeHelpers;
 
@@ -319,7 +320,8 @@ namespace moreammunation
             public DateTime RespawnTime { get; set; }
         }
 
-
+        // iFruit phone
+        readonly CustomiFruit _iFruit;
 
         // LemonUI components
         private ObjectPool pool;
@@ -390,6 +392,38 @@ namespace moreammunation
         // Config and key settings
         ScriptSettings config;
         Keys enable;
+
+        private void ContactAnswered(iFruitContact contact)
+        {
+            // The contact has answered, we can execute our code
+            GTA.UI.Notification.Show(GTA.UI.NotificationIcon.MpArmyContact, "Agent Steele", "Alert", $"Hi bitch !", true, false);
+
+            Ped player = Game.Player.Character;
+            Vector3 spawnPos = World.GetNextPositionOnStreet(player.Position.Around(15000f)); // 10 meters away
+
+            Model muleModel = new Model("MULE");
+            if (muleModel.IsInCdImage && muleModel.IsValid)
+            {
+                muleModel.Request(500);
+                while (!muleModel.IsLoaded) Script.Yield();
+
+                Vehicle mule = World.CreateVehicle(muleModel, spawnPos);
+                Blip muleBlip = mule.AddBlip();
+                muleBlip.Sprite = BlipSprite.Truck;
+                muleBlip.Color = BlipColor.Blue;
+                muleBlip.Name = "Target";
+                muleBlip.FlashInterval = 4;
+
+                GTA.UI.Notification.Show($"~g~Mule spawned near you.");
+                muleModel.MarkAsNoLongerNeeded();
+            }
+            else
+            {
+                GTA.UI.Notification.Show("~r~Failed to load Mule model!");
+            }
+
+            _iFruit.Close(5000);
+        }
         private void OnAborted(object sender, EventArgs e)
         {
             // Cleanup vehicles + blips
@@ -517,7 +551,7 @@ namespace moreammunation
                 if (!heistActive.ContainsKey(currentZone) || !heistActive[currentZone])
                 {
                     heistActive[currentZone] = true;
-                    AggroPedsInZone(currentZone);
+                    AggroPedsInZone(currentZone); 
                     // Delete old blip if it exists
                     if (heistBlip != null && heistBlip.Exists())
                         heistBlip.Delete();
@@ -553,7 +587,7 @@ namespace moreammunation
             // Reset flag and nearest vehicle
             isNearArmoryZone = false;
             Vehicle nearestVehicle = null;
-
+            _iFruit.Update();
             // Create blips and vehicles if not done yet
             if (!zonesCreated)
             {
@@ -1309,9 +1343,39 @@ namespace moreammunation
 
             LoadarmoryZonePositions(); // Only loads coordinates
 
+
+            // Initialize Ifruit components
+
+            // Custom phone creation
+            _iFruit = new CustomiFruit();
+
+            // Wallpaper customization
+            // Game phone wallpaper:
+            _iFruit.SetWallpaper(Wallpaper.Orange8Bit);
+            // Game texture wallpaper (ytd file)
+            // Warning: since we cannot choose the texture inside the texture dictionary, the game will take the texture that have the same name as the ytd file.
+            // ie: "prop_screen_dctl.ytd" file has a "prop_screen_dctl" texture inside it, so it will work.
+            _iFruit.SetWallpaper("prop_screen_dctl");
+
+            // Buttons customization
+            _iFruit.LeftButtonColor = System.Drawing.Color.LimeGreen;
+            _iFruit.CenterButtonColor = System.Drawing.Color.Orange;
+            _iFruit.RightButtonColor = System.Drawing.Color.Purple;
+            _iFruit.LeftButtonIcon = SoftKeyIcon.Police;
+            _iFruit.CenterButtonIcon = SoftKeyIcon.Fire;
+            _iFruit.RightButtonIcon = SoftKeyIcon.Website;
+
+            // New contact (wait 4 seconds (4000ms) before picking up the phone)
+            iFruitContact contactAgentSteele = new iFruitContact("Agent Steele")
+            {
+                DialTimeout = 4000,            // Delay before answering
+                Active = true,                 // true = the contact is available and will answer the phone
+                Icon = ContactIcon.MP_ArmyContact     // Contact's icon
+            };
+            contactAgentSteele.Answered += ContactAnswered;   // Linking the Answered event with our function
+            _iFruit.Contacts.Add(contactAgentSteele);         // Add the contact to the phone
+
             
-
-
 
             // Initialize LemonUI components
 
