@@ -31,6 +31,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="iFruitAddon2">
+      <HintPath>Z:\SteamLibrary\steamapps\common\Grand Theft Auto V\scripts\iFruitAddon2.dll</HintPath>
+    </Reference>
     <Reference Include="LemonUI.SHVDN3">
       <HintPath>Z:\SteamLibrary\steamapps\common\Grand Theft Auto V\scripts\LemonUI.SHVDN3.dll</HintPath>
     </Reference>

@@ -2,6 +2,7 @@
 using GTA.Math;
 using GTA.Native;
 using GTA.UI;
+using iFruitAddon2;
 using LemonUI;
 using LemonUI.Elements;
 using LemonUI.Menus;
@@ -9,8 +10,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using System.Xml;
 using static System.Runtime.CompilerServices.RuntimeHelpers;
 
 
@@ -35,6 +38,34 @@ namespace moreammunation
         public string VehicleName { get; set; }
 
         public int HeistReward;
+        public bool SpawnNpc { get; set; }
+        public string NpcModel { get; set; }
+
+        public int NpcNumber { get; set; }
+
+    }
+    public class VehicleRespawn
+    {
+        public ArmoryZone Zone { get; set; }
+        public Vehicle Vehicle { get; set; } // the exact vehicle instance
+        public DateTime RespawnTime { get; set; }
+    }
+    public class PedRespawn
+    {
+        public ArmoryZone Zone;
+        public Ped Ped;
+        public DateTime RespawnTime;
+    }
+    public class HeistLocation
+    {
+        public string Name { get; set; }
+        public Vector3 Position { get; set; }
+        public float Radius { get; set; }
+        public string Description { get; set; }
+
+        // Vehicle details for the heist
+        public string VehicleModel { get; set; } = null;
+        public Vector3 VehicleOffset { get; set; } = Vector3.Zero;
     }
 
     public class Main : Script
@@ -301,23 +332,15 @@ namespace moreammunation
             { WeaponHash.FertilizerCan, 50 },
             { WeaponHash.AcidPackage, 50 }
         };
-
-        // Dictionary to hold WeaponUI instances for each weapon
         Dictionary<WeaponHash, WeaponUI> weaponUIs = new Dictionary<WeaponHash, WeaponUI>();
 
-        // Struct to manage vehicle respawn timing
-        class VehicleRespawn
-        {
-            public ArmoryZone Zone { get; set; }
-            public Vehicle Vehicle { get; set; } // the exact vehicle instance
-            public DateTime RespawnTime { get; set; }
-        }
-
-
+        // iFruit phone
+        readonly CustomiFruit _iFruit;
 
         // LemonUI components
         private ObjectPool pool;
         private NativeMenu armoryMenu;
+        private NativeMenu armoryHeistMenu;
         private NativeMenu cHWeapon;
         private NativeMenu meleeSubMenu;
         private NativeMenu handgunsSubMenu;
@@ -333,25 +356,17 @@ namespace moreammunation
         private bool isNearArmoryZone = false;
         private List<ArmoryZone> armoryZones = new List<ArmoryZone>();
         private Dictionary<Vehicle, Blip> vehicleBlips = new Dictionary<Vehicle, Blip>();
-
         private List<Blip> staticZoneBlips = new List<Blip>();
         private List<VehicleRespawn> vehiclesToRespawn = new List<VehicleRespawn>();
         private float armoryZoneRadius = 6.0f;
         private bool zonesCreated = false;
         private Vehicle vehicle = null;
 
-        //HEIST
-        private Blip heistBlip = null;
-        private bool cleanupDone = false;
-        private Keys heistKey; // Key to start heist
-        private int buyWeaponsNotification = -1;
-        private int heistNotification = -1;
-        private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
-        private int lastWantedLevel = 0;
-        private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
-        private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
-        private Dictionary<Vehicle, ArmoryZone> vehicleZoneMapping = new Dictionary<Vehicle, ArmoryZone>();
-        private Vehicle activeHeistVehicle = null;
+        // Added List of Contact Heist Locations
+        private List<HeistLocation> heistLocations = new List<HeistLocation>();
+        private HeistLocation activeHeistLocation;
+
+        //On Site Heist
         private bool AnyHeistActive()
         {
             bool active = heistActive.Values.Any(h => h);
@@ -362,45 +377,460 @@ namespace moreammunation
 
             return active;
         }
+        private Blip heistBlip = null;
+        private bool cleanupDone = false;
+        private Keys heistKey; // Key to start heist
+        private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
+        private int lastWantedLevel = 0;
+        private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
+        private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
+        private Dictionary<Vehicle, ArmoryZone> vehicleZoneMapping = new Dictionary<Vehicle, ArmoryZone>();
+        private Vehicle activeHeistVehicle = null;
         private DateTime lastHeistEndTime = DateTime.MinValue;
         private readonly TimeSpan heistCooldown = TimeSpan.FromSeconds(11);
+        private Random rnd = new Random();
+        private List<Ped> spawnedPeds = new List<Ped>();
+
+        //NPC STUFF
+        private Dictionary<Ped, ArmoryZone> pedZoneMapping = new Dictionary<Ped, ArmoryZone>();
+        private List<PedRespawn> pedsToRespawn = new List<PedRespawn>();
+        private List<(Ped ped, DateTime deleteAt)> pedsPendingDeletion = new List<(Ped, DateTime)>();
+        private DateTime lastDeathTime = DateTime.MinValue;
+        private bool wasPlayerDead = false;
+        private Dictionary<Ped, Blip> hostilePedBlips = new Dictionary<Ped, Blip>();
 
         // Config and key settings
         ScriptSettings config;
         Keys enable;
 
+        private void CleanupExistingArmoryEntities()
+        {
+            // Remove vehicles belonging to zones
+            foreach (var vehicle in World.GetAllVehicles())
+            {
+                foreach (var zone in armoryZones)
+                {
+                    if (vehicle.Model.Hash == new Model(zone.VehicleName).Hash)
+                    {
+                        if (vehicle.Exists())
+                            vehicle.Delete();
+                    }
+                }
+            }
+
+            vehicleBlips.Clear();
+            vehiclesToRespawn.Clear();
+
+            // Remove NPCs belonging to zones
+            foreach (var ped in World.GetAllPeds())
+            {
+                foreach (var zone in armoryZones)
+                {
+                    if (ped.Model.Hash == new Model(zone.NpcModel).Hash)
+                    {
+                        if (ped.Exists())
+                            ped.Delete();
+                    }
+                }
+            }
+
+
+            // Contact heist vehicle 
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+            {
+                if (heistBlip != null && heistBlip.Exists())
+                    heistBlip.Delete();
+
+                activeHeistVehicle.MarkAsNoLongerNeeded();
+                activeHeistVehicle.Delete();
+                activeHeistVehicle = null;
+            }
+
+            spawnedPeds.Clear();
+            pedZoneMapping.Clear();
+
+            // Remove static zone blips
+            foreach (var blip in staticZoneBlips.ToList())
+            {
+                if (blip.Exists())
+                    blip.Delete();
+            }
+            staticZoneBlips.Clear();
+
+        }
         private void OnAborted(object sender, EventArgs e)
         {
-            int vehicleCount = vehicleBlips.Count;
-            int blipCount = vehicleBlips.Count; // same as vehicles, one blip per vehicle
-
-            // Delete vehicle-linked blips and vehicles
+            // Cleanup vehicles + blips
             foreach (var pair in vehicleBlips)
             {
                 Vehicle v = pair.Key;
                 Blip b = pair.Value;
 
-                if (b != null && b.Exists())
-                    b.Delete();
-
-                if (v != null && v.Exists())
-                    v.Delete();
+                if (b != null && b.Exists()) b.Delete();
+                if (v != null && v.Exists()) v.Delete();
             }
             vehicleBlips.Clear();
 
-            // If you have separate static blips (zones without vehicles), clean them too
-            int staticBlipCount = staticZoneBlips.Count;
             foreach (var blip in staticZoneBlips)
             {
-                if (blip != null && blip.Exists())
-                    blip.Delete();
+                if (blip != null && blip.Exists()) blip.Delete();
             }
             staticZoneBlips.Clear();
 
-            // Remove the delivery blip
             if (heistBlip != null && heistBlip.Exists())
-                heistBlip.Delete(); // Just in case a previous blip wasn't cleaned up
+                heistBlip.Delete();
 
+            
+            foreach (var ped in spawnedPeds)
+            {
+                if (ped != null && ped.Exists())
+                    ped.Delete();
+            }
+            spawnedPeds.Clear();
+
+            // Contact heist vehicle 
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+            {
+                if (heistBlip != null && heistBlip.Exists())
+                    heistBlip.Delete();
+
+                activeHeistVehicle.MarkAsNoLongerNeeded();
+                activeHeistVehicle.Delete();
+                activeHeistVehicle = null;
+            }
+        }
+        private void LoadarmoryZonePositions()
+        {
+            CleanupExistingArmoryEntities();
+
+            int zoneIndex = 1;
+            while (true)
+            {
+                float x = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationX", float.NaN);
+                float y = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationY", float.NaN);
+                float z = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationZ", float.NaN);
+                if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z))
+                    break;
+
+                string blipSpriteString = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipSprite", "ammunation");
+                string blipColorString = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipColor", "BlueLight");
+                string blipName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipName", $"Armory {zoneIndex}");
+                bool spawnVehicle = config.GetValue<bool>($"ArmoryZone{zoneIndex}", "DeliveryVehicle", true);
+                string vehicleName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "VehicleName", "mule");
+                bool spawnNpc = config.GetValue<bool>($"ArmoryZone{zoneIndex}", "SpawnNpc", true);
+                string npcName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "NpcName", "s_m_m_armoured_01");
+                int npcNumber = config.GetValue<int>($"ArmoryZone{zoneIndex}", "NpcNumber", 1);
+
+
+                armoryZones.Add(new ArmoryZone()
+                {
+                    Position = new Vector3(x, y, z),
+                    BlipSprite = blipSpriteString,
+                    BlipColor = blipColorString,
+                    BlipName = blipName,
+                    SpawnVehicle = spawnVehicle,
+                    VehicleName = vehicleName,
+                    SpawnNpc = spawnNpc,
+                    NpcModel = npcName,
+                    NpcNumber = npcNumber,
+                    HeistReward = config.GetValue<int>($"ArmoryZone{zoneIndex}", "heistReward", 110000),
+
+                });
+
+                zoneIndex++;
+            }
+
+            GTA.UI.Notification.Show(
+                GTA.UI.NotificationIcon.Ammunation,
+                "Ammunation",
+                "Ammunation +",
+                $"~w~Loaded ~b~{armoryZones.Count} ~w~new Ammunations on the map.",
+                true,
+                false
+            );
+
+            GTA.UI.Notification.Show(
+                GTA.UI.NotificationIcon.MpArmyContact,
+                "Agent Steele",
+                "Ammu-Nation +",
+                "~w~Hey, Agent Steele here.~n~I’ve got a heist that might interest you.~n~There’s an arms drop at the new Ammu-Nations on the map.~n~Let me know when you’re ready to make some real money.",
+                true,
+                false
+            );
+
+
+
+        }
+        private void CreatearmoryZoneBlips()
+        {
+            foreach (var zone in armoryZones)
+            {
+                Vehicle vehicle = null; // track per-zone vehicle
+
+                // --- VEHICLE SPAWN ---
+                if (zone.SpawnVehicle)
+                {
+                    Model vehicleModel = new Model(zone.VehicleName);
+                    if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
+                    {
+                        vehicleModel.Request(500);
+                        while (!vehicleModel.IsLoaded) Script.Yield();
+
+                        vehicle = World.CreateVehicle(vehicleModel, zone.Position + new Vector3(2f, 2f, 0f));
+                        vehicle.IsPersistent = true;
+                        vehicle.AreLightsOn = true;
+                        vehicle.AreBrakeLightsOn = true;
+                        vehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                        vehicle.IsDriveable = false;
+
+                        // Open a relevant door (trunk or fallback)
+                        int doorIndex = 5; // trunk first
+                        if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
+                        {
+                            doorIndex = 2;
+                            if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
+                                doorIndex = 0;
+                        }
+
+                        // --- Vehicle blip ---
+                        int blipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
+                        Function.Call(Hash.SET_BLIP_SPRITE, blipHandle, (int)GetBlipSprite(zone.BlipSprite));
+                        Function.Call(Hash.SET_BLIP_COLOUR, blipHandle, (int)GetBlipColor(zone.BlipColor));
+                        Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
+                        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, zone.BlipName);
+                        Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, blipHandle);
+
+                        Blip vehicleBlipObj = new Blip(blipHandle);
+                        vehicleBlips.Add(vehicle, vehicleBlipObj);
+                        vehicleZoneMapping[vehicle] = zone;
+                    }
+                    else
+                    {
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.Ammunation,
+                            "Ammunation",
+                            "Alert",
+                            $"~r~Failed to load {zone.VehicleName}",
+                            true,
+                            false
+                        );
+                    }
+                }
+
+                // --- NPC SPAWN ---
+                if (zone.SpawnNpc)
+                {
+                    Model pedModel = new Model(zone.NpcModel);
+                    pedModel.Request(500);
+                    while (!pedModel.IsLoaded) Script.Yield();
+                    Random rnd = new Random();
+
+                    for (int i = 0; i < zone.NpcNumber; i++)
+                    {
+                        float offsetX = (float)(rnd.NextDouble() * 10.0 - 5.0);
+                        float offsetY = (float)(rnd.NextDouble() * 10.0 - 5.0);
+                        Vector3 basePosition = vehicle != null ? vehicle.Position : zone.Position;
+
+                        // Ground height
+                        float groundZ;
+                        if (!World.GetGroundHeight(basePosition, out groundZ))
+                            groundZ = basePosition.Z;
+
+                        Vector3 npcPosition = new Vector3(basePosition.X + offsetX, basePosition.Y + offsetY, groundZ + 1.0f);
+                        Ped npc = World.CreatePed(pedModel, npcPosition);
+                        npc.IsPersistent = true;
+                        spawnedPeds.Add(npc);
+                        pedZoneMapping[npc] = zone;
+
+                        // Random weapon
+                        var allWeapons = HandgunsValues.Keys.Concat(SMGsValues.Keys)
+                                         .Concat(RiflesValues.Keys)
+                                         .Concat(MachineGunsValues.Keys)
+                                         .Concat(ShotgunsValues.Keys).ToList();
+
+                        WeaponHash randomWeapon = allWeapons[rnd.Next(allWeapons.Count)];
+                        int ammo = 100;
+                        if (HandgunsValues.ContainsKey(randomWeapon))
+                            ammo = HandgunsValues[randomWeapon] / 10;
+                        else if (SMGsValues.ContainsKey(randomWeapon))
+                            ammo = SMGsValues[randomWeapon] / 10;
+                        else if (RiflesValues.ContainsKey(randomWeapon))
+                            ammo = RiflesValues[randomWeapon] / 10;
+                        else if (MachineGunsValues.ContainsKey(randomWeapon))
+                            ammo = MachineGunsValues[randomWeapon] / 10;
+                        else if (ShotgunsValues.ContainsKey(randomWeapon))
+                            ammo = ShotgunsValues[randomWeapon] / 10;
+
+                        npc.Weapons.Give(randomWeapon, ammo, true, true);
+                        npc.CanSwitchWeapons = true;
+                        npc.RelationshipGroup = RelationshipGroupHash.Army;
+                        Function.Call(Hash.SET_PED_AS_ENEMY, npc.Handle, true);
+                        Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, npc.Handle, 46, true);
+                        Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, npc.Handle, 5, true);
+                        Function.Call(Hash.SET_PED_ACCURACY, npc.Handle, 50);
+                        Function.Call(Hash.TASK_WANDER_IN_AREA, npc.Handle, npcPosition.X, npcPosition.Y, npcPosition.Z, 3.0f, 3.0f, 3.0f);
+                    }
+                }
+
+                // --- STATIC BLIP ONLY if NO VEHICLE ---
+                if (!zone.SpawnVehicle)
+                {
+                    Blip zoneBlip = World.CreateBlip(zone.Position);
+                    zoneBlip.Sprite = GetBlipSprite(zone.BlipSprite);
+                    zoneBlip.Color = GetBlipColor(zone.BlipColor);
+                    zoneBlip.Name = zone.BlipName;
+                    staticZoneBlips.Add(zoneBlip);
+                }
+            }
+        }
+        private void ContactAnswered(iFruitContact contact)
+        {
+            _iFruit.Close(5000);
+
+            // Create the heist menu only once
+            if (armoryHeistMenu == null)
+            {
+                armoryHeistMenu = new NativeMenu(
+                    "",
+                    "AGENT STEELE",
+                    "Special Operations",
+                    new ScaledTexture(
+                        PointF.Empty,
+                        new SizeF(431, 107),
+                        "thumbnail_ammunation_net",
+                        "ammunation_banner"
+                    )
+                );
+
+                pool.Add(armoryHeistMenu);
+
+                var startHeistItem = new NativeItem("Start Weapon Delivery Heist");
+                startHeistItem.Activated += (s, e) =>
+                {
+                    StartWeaponDeliveryHeist();
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.MpArmyContact, "Agent Steele", "", "~w~Alright, I’ve marked the target vehicle on your GPS. Move fast.", true, false);
+                    // Call your heist start logic here
+                };
+                armoryHeistMenu.Add(startHeistItem);
+            }
+
+            // Open the new menu
+            armoryHeistMenu.Visible = true;
+        }
+        private void LoadHeistLocations()
+        {
+            string folderPath = @"scripts\MoreAmmunationsMod\ContactMissions";
+
+            if (!Directory.Exists(folderPath))
+            {
+                Directory.CreateDirectory(folderPath);
+                GTA.UI.Notification.Show($"~y~Created folder: {folderPath}");
+                return;
+            }
+
+            string[] files = Directory.GetFiles(folderPath, "*.xml", SearchOption.AllDirectories);
+            heistLocations.Clear();
+
+            foreach (string file in files)
+            {
+                try
+                {
+                    var doc = new XmlDocument();
+                    doc.Load(file);
+
+                    var node = doc.SelectSingleNode("HeistLocation");
+                    if (node != null)
+                    {
+                        float x = float.Parse(node["PositionX"].InnerText);
+                        float y = float.Parse(node["PositionY"].InnerText);
+                        float z = float.Parse(node["PositionZ"].InnerText);
+                        float radius = float.Parse(node["Radius"].InnerText);
+
+                        HeistLocation loc = new HeistLocation
+                        {
+                            Name = node["Name"].InnerText,
+                            Position = new Vector3(x, y, z),
+                            Radius = radius,
+                            Description = node["Description"].InnerText
+                        };
+
+                        // Optional vehicle node
+                        var vehicleNode = node.SelectSingleNode("Vehicle");
+                        if (vehicleNode != null)
+                        {
+                            loc.VehicleModel = vehicleNode["ModelName"]?.InnerText;
+                            float ox = float.Parse(vehicleNode["OffsetX"]?.InnerText ?? "0");
+                            float oy = float.Parse(vehicleNode["OffsetY"]?.InnerText ?? "0");
+                            float oz = float.Parse(vehicleNode["OffsetZ"]?.InnerText ?? "0");
+                            loc.VehicleOffset = new Vector3(ox, oy, oz);
+                        }
+
+                        heistLocations.Add(loc);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GTA.UI.Notification.Show($"~r~Error loading: {Path.GetFileName(file)} | {ex.Message}");
+                }
+            }
+
+            GTA.UI.Notification.Show($"~g~Loaded {heistLocations.Count} More Ammunations zones.");
+        }
+        private void StartWeaponDeliveryHeist()
+        {
+            if (heistLocations.Count == 0)
+            {
+                GTA.UI.Notification.Show("~r~No More Ammunations locations found.");
+                return;
+            }
+
+            // Pick a random location
+            Random rnd = new Random();
+            activeHeistLocation = heistLocations[rnd.Next(heistLocations.Count)];
+
+            // Remove old blip if exists
+            if (heistBlip != null && heistBlip.Exists())
+                heistBlip.Delete();
+
+
+  
+                
+
+
+
+                // Spawn vehicle if defined
+                if (!string.IsNullOrEmpty(activeHeistLocation.VehicleModel))
+                {
+                    Model vehicleModel = new Model(activeHeistLocation.VehicleModel);
+                    if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
+                    {
+                        vehicleModel.Request(500);
+                        while (!vehicleModel.IsLoaded) Script.Yield();
+
+                        Vector3 spawnPos = activeHeistLocation.Position;
+                        if (activeHeistLocation.VehicleOffset != null)
+                            spawnPos += activeHeistLocation.VehicleOffset;
+
+                        Vehicle contactHeistVehicle = World.CreateVehicle(vehicleModel, spawnPos);
+                        contactHeistVehicle.IsPersistent = true;
+                        contactHeistVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                        contactHeistVehicle.AreLightsOn = true;
+                        activeHeistVehicle = contactHeistVehicle;
+
+                        // Attach blip directly to the vehicle
+                        heistBlip = contactHeistVehicle.AddBlip();
+                        heistBlip.Sprite = BlipSprite.Standard;
+                        heistBlip.Color = BlipColor.Red;
+                        heistBlip.Name = $"Weapon Delivery: {activeHeistLocation.Name}";
+                        heistBlip.ShowRoute = true;
+                    }
+                    else
+                    {
+                        GTA.UI.Notification.Show($"~r~Failed to load vehicle model: {activeHeistLocation.VehicleModel}");
+                    }
+                }
+
+            GTA.UI.Notification.Show($"~b~Heist started!~s~ Head to ~y~{activeHeistLocation.Name}~s~.");
         }
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
@@ -417,7 +847,7 @@ namespace moreammunation
                 }
                 else if (e.KeyCode == heistKey)
                 {
-                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.Ammunation, "Ammunation", "Alert", $"~r~You cannot start another heist yet!", true, false);
+                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.MpArmyContact, "Agent Steele", "Alert", $"~r~You haven't finished the current heist yet!", true, false);
                 }
                 return;
             }
@@ -459,7 +889,7 @@ namespace moreammunation
                 if (!heistActive.ContainsKey(currentZone) || !heistActive[currentZone])
                 {
                     heistActive[currentZone] = true;
-
+                    AggroPedsInZone(currentZone); 
                     // Delete old blip if it exists
                     if (heistBlip != null && heistBlip.Exists())
                         heistBlip.Delete();
@@ -472,6 +902,15 @@ namespace moreammunation
                     heistBlip.ShowRoute = true;
 
                     GTA.UI.Screen.ShowSubtitle("~g~ Heist started!~g~ ~w~ Deliver the weapons to the destination.", 5000);
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "Ammu-Nation +",
+                        "~w~Great job, hotshot. But the stolen weapons just got flagged on the radar.~n~Haul them to the drop — I’ll handle the heat when you arrive. Don’t screw it up.",
+                        true,
+                        false
+                    );
+
 
 
                 }
@@ -486,15 +925,14 @@ namespace moreammunation
             // Reset flag and nearest vehicle
             isNearArmoryZone = false;
             Vehicle nearestVehicle = null;
-
+            _iFruit.Update();
             // Create blips and vehicles if not done yet
             if (!zonesCreated)
             {
-                CleanupExistingArmoryVehicles();
+                CleanupExistingArmoryEntities();
                 CreatearmoryZoneBlips();
                 zonesCreated = true;
             }
-
 
             // Check if the player is near any spawned armory vehicle (using dictionary keys)
             foreach (var vehicle in vehicleBlips.Keys)
@@ -510,16 +948,267 @@ namespace moreammunation
                     }
                 }
             }
+            // If no vehicle nearby, check distance to the zone position itself
+            if (!isNearArmoryZone)
+            {
+                foreach (var zone in armoryZones)
+                {
+                    float distance = Game.Player.Character.Position.DistanceTo(zone.Position);
+                    if (distance < armoryZoneRadius)
+                    {
+                        isNearArmoryZone = true;
+                        break;
+                    }
+                }
+            }
 
+            
 
-            // Show notification if near a vehicle
             if (isNearArmoryZone && nearestVehicle != null && Game.Player.Character.IsOnFoot)
             {
-                // 🔒 Prevent help text if ANY heist is active
-                if (!AnyHeistActive())
+                // Make sure we're actually near a zone that has a vehicle spawn enabled
+                var currentZone = armoryZones.FirstOrDefault(zone =>
+                    zone.Position.DistanceTo(nearestVehicle.Position) < armoryZoneRadius &&
+                    zone.SpawnVehicle == true);
+
+                if (currentZone != null && !AnyHeistActive())
                 {
-                    // Buy/modify weapons help text
-                    GTA.UI.Screen.ShowHelpText($"~w~Press ~b~{enable}~w~ to buy or modify weapons, or press ~b~{heistKey}~w~ to rob the vehicle.", 3000);
+                    GTA.UI.Screen.ShowHelpText(
+                        $"~w~Press ~b~{enable}~w~ to buy or modify weapons, or press ~b~{heistKey}~w~ to rob the vehicle.",
+                        3000
+                    );
+                }
+            }
+
+            if (isNearArmoryZone && (nearestVehicle == null || !nearestVehicle.Exists()) && Game.Player.Character.IsOnFoot)
+            {
+                var currentZone = armoryZones.FirstOrDefault(zone =>
+                    Game.Player.Character.Position.DistanceTo(zone.Position) < armoryZoneRadius &&
+                    zone.SpawnVehicle == false);
+
+                if (currentZone != null && !AnyHeistActive())
+                {
+                    GTA.UI.Screen.ShowHelpText(
+                        $"~w~Press ~b~{enable}~w~ to buy or modify weapons.",
+                        3000
+                    );
+                }
+            }
+
+            // Detect player death and respawn
+            if (Game.Player.IsDead && !wasPlayerDead)
+            {
+                // Mark as dead once
+                wasPlayerDead = true;
+            }
+            else if (!Game.Player.IsDead && wasPlayerDead)
+            {
+                // Player just respawned (was dead before, now alive)
+                wasPlayerDead = false;
+
+                // Delay a bit to let world load
+                GTA.Script.Wait(2000);
+
+                // Now safely clean up and respawn everything
+                pedZoneMapping.Clear();
+                pedsToRespawn.Clear();
+                pedsPendingDeletion.Clear();
+                spawnedPeds.Clear();
+
+                vehicleZoneMapping.Clear();
+                vehicleBlips.Clear();
+                vehiclesToRespawn.Clear();
+                vehiclesToDelete.Clear();
+
+                foreach (var blip in hostilePedBlips.Values)
+                {
+                    if (blip.Exists())
+                        blip.Delete();
+                }
+                hostilePedBlips.Clear();
+
+
+                CleanupExistingArmoryEntities();
+                CreatearmoryZoneBlips();
+            }
+
+
+
+            // Ped Respawn Logic
+            var deadPeds = new List<Ped>();
+
+            foreach (var pair in pedZoneMapping.ToList()) 
+            {
+                Ped ped = pair.Key;
+                ArmoryZone zone = pair.Value;
+
+                if (ped == null || !ped.Exists() || ped.IsDead)
+                {
+                    deadPeds.Add(ped);
+
+                    // Queue respawn ONLY if not already queued
+                    bool alreadyQueued = pedsToRespawn.Any(p => p.Ped == ped);
+                    if (!alreadyQueued)
+                    {
+                        pedsToRespawn.Add(new PedRespawn
+                        {
+                            Zone = zone,
+                            Ped = ped,
+                            RespawnTime = DateTime.Now.AddSeconds(10)
+                        });
+                    }
+                }
+            }
+
+            // Clean up dead peds safely
+            foreach (var ped in deadPeds)
+            {
+                if (ped != null && ped.Exists())
+                {
+                    // Schedule deletion 5 seconds later
+                    pedsPendingDeletion.Add((ped, DateTime.Now.AddSeconds(5)));
+                }
+
+                
+
+                pedZoneMapping.Remove(ped);
+                spawnedPeds.Remove(ped);
+            }
+
+            // Respawn queued NPCs
+            var respawnReadyPeds = pedsToRespawn.Where(p => DateTime.Now >= p.RespawnTime).ToList();
+
+            foreach (var respawn in respawnReadyPeds)
+            {
+                // 🔒 Safety: ensure old ped is truly gone
+                if (respawn.Ped != null && respawn.Ped.Exists())
+                    continue;
+
+                ArmoryZone zone = respawn.Zone;
+                Model pedModel = new Model(zone.NpcModel);
+                pedModel.Request(500);
+                while (!pedModel.IsLoaded) Script.Yield();
+
+                Random rnd = new Random();
+                float offsetX = (float)(rnd.NextDouble() * 20.0 - 15.0);
+                float offsetY = (float)(rnd.NextDouble() * 20.0 - 15.0);
+
+                Vector3 basePosition = zone.Position;
+                float groundZ = World.GetGroundHeight(basePosition);
+
+                Vector3 npcPosition = new Vector3(
+                    basePosition.X + offsetX,
+                    basePosition.Y + offsetY,
+                    groundZ
+                );
+
+                Ped newPed = World.CreatePed(pedModel, npcPosition);
+                newPed.IsPersistent = true;
+                spawnedPeds.Add(newPed);
+                pedZoneMapping[newPed] = zone;
+
+                // Randomize weapon
+                var allWeapons = new List<WeaponHash>();
+                allWeapons.AddRange(HandgunsValues.Keys);
+                allWeapons.AddRange(SMGsValues.Keys);
+                allWeapons.AddRange(RiflesValues.Keys);
+                allWeapons.AddRange(MachineGunsValues.Keys);
+                allWeapons.AddRange(ShotgunsValues.Keys);
+
+                WeaponHash randomWeapon = allWeapons[rnd.Next(allWeapons.Count)];
+                newPed.Weapons.Give(randomWeapon, 100, true, true);
+                newPed.CanSwitchWeapons = true;
+
+                // AI setup
+                newPed.RelationshipGroup = RelationshipGroupHash.Army;
+                Function.Call(Hash.SET_PED_AS_ENEMY, newPed.Handle, true);
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, newPed.Handle, 46, true);
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, newPed.Handle, 5, true);
+                Function.Call(Hash.SET_PED_ACCURACY, newPed.Handle, 50);
+                Function.Call(Hash.TASK_WANDER_IN_AREA, newPed.Handle, npcPosition.X, npcPosition.Y, npcPosition.Z, 3.0f, 3.0f, 3.0f);
+
+                // 🗺️ Add blip for aggressive ped
+                newPed.RelationshipGroup = RelationshipGroupHash.Army;
+                Function.Call(Hash.SET_PED_AS_ENEMY, newPed.Handle, true);
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, newPed.Handle, 46, true);
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, newPed.Handle, 5, true);
+                Function.Call(Hash.SET_PED_ACCURACY, newPed.Handle, 50);
+                Function.Call(Hash.TASK_WANDER_IN_AREA, newPed.Handle, npcPosition.X, npcPosition.Y, npcPosition.Z, 3.0f, 3.0f, 3.0f);
+
+                // Store reference if you need to remove later
+                
+
+                pedsToRespawn.Remove(respawn);
+            }
+
+            foreach (var ped in spawnedPeds.ToList())
+            {
+                // Skip missing/dead peds
+                if (ped == null || !ped.Exists() || ped.IsDead)
+                {
+                    if (hostilePedBlips.ContainsKey(ped))
+                    {
+                        hostilePedBlips[ped].Delete();
+                        hostilePedBlips.Remove(ped);
+                    }
+                    continue;
+                }
+
+                // Check aggression
+                bool isAggressive =
+                    Function.Call<bool>(Hash.IS_PED_IN_COMBAT, ped.Handle, Game.Player.Character.Handle) ||
+                    Function.Call<bool>(Hash.HAS_PED_RECEIVED_EVENT, ped.Handle, 75); // PED_AGGRO event
+
+                if (isAggressive)
+                {
+                    // Add blip if not already added
+                    if (!hostilePedBlips.ContainsKey(ped))
+                    {
+                        Blip pedBlip = ped.AddBlip();
+                        pedBlip.Color = BlipColor.Red;
+                        pedBlip.Scale = 0.8f;
+                        pedBlip.IsShortRange = false;
+                        pedBlip.Name = "Ammunation Guards";
+                        Function.Call(Hash.SET_BLIP_AS_FRIENDLY, pedBlip.Handle, false);
+
+                        hostilePedBlips[ped] = pedBlip;
+                    }
+                }
+                else
+                {
+                    // Remove blip if ped calms down
+                    if (hostilePedBlips.ContainsKey(ped))
+                    {
+                        hostilePedBlips[ped].Delete();
+                        hostilePedBlips.Remove(ped);
+                    }
+                }
+            }
+
+
+
+
+
+
+            // 🧨 Logic for destroyed contact heist vehicle
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+            {
+                // If it's destroyed or no longer exists properly
+                if (activeHeistVehicle.IsDead)
+                {
+                    // Delete blip if it exists
+                    if (heistBlip != null && heistBlip.Exists())
+                    {
+                        heistBlip.Delete();
+                        heistBlip = null;
+                    }
+
+                    // Delete the vehicle
+                    activeHeistVehicle.MarkAsNoLongerNeeded();
+                    activeHeistVehicle.Delete();
+                    activeHeistVehicle = null;
+
+                    GTA.UI.Notification.Show("~r~Contact vehicle destroyed!");
                 }
             }
 
@@ -569,9 +1258,6 @@ namespace moreammunation
                 vehicleBlips.Remove(v);
             }
 
-
-
-
             // Check for vehicles that need to respawn
             var respawnNow = vehiclesToRespawn.Where(v => DateTime.Now >= v.RespawnTime).ToList();
 
@@ -585,7 +1271,6 @@ namespace moreammunation
                 Model vehicleModel = new Model(respawn.Zone.VehicleName);
                 vehicleModel.Request(500);
                 while (!vehicleModel.IsLoaded) Script.Yield();
-
                 Vehicle newVehicle = World.CreateVehicle(vehicleModel, respawn.Zone.Position + new Vector3(2f, 2f, 0f));
                 newVehicle.IsPersistent = true;
                 newVehicle.AreLightsOn = true;
@@ -614,21 +1299,14 @@ namespace moreammunation
                 Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
                 Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, respawn.Zone.BlipName);
                 Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
-
                 Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
                 vehicleBlips.Add(newVehicle, vehicleBlipObj);
                 vehicleZoneMapping[newVehicle] = respawn.Zone; // link the new vehicle to the zone
-
                 vehiclesToRespawn.Remove(respawn);
             }
 
-
-
             //Logic For Armory Heist
-
-
             lastWantedLevel = Game.Player.WantedLevel;
-
             if (!cleanupDone)
             {
                 // remove any leftover delivery blips
@@ -644,29 +1322,33 @@ namespace moreammunation
             foreach (var pair in heistActive.ToList())
             {
                 ArmoryZone zone = pair.Key;
-                bool isActive = pair.Value;
-                
-                
-                if (!isActive) continue; // skip inactive heists
-                
-                    
+                bool isActive = pair.Value;               
+                if (!isActive) continue; // skip inactive heists                   
                 Vehicle playerVehicle = activeHeistVehicle;
 
                 // Check if vehicle exists and is not destroyed
                 if (playerVehicle != null && playerVehicle.Exists() && !playerVehicle.IsDead)
                 {
                     float distanceToTarget = playerVehicle.Position.DistanceTo(heistTarget);
-
                     if (distanceToTarget < 8.0f) // Heist success radius
                     {
                         activeHeistVehicle = null;
+
                         // Reward player
                         Game.Player.Money += zone.HeistReward;
-                        GTA.UI.Screen.ShowSubtitle($"~g~Heist Completed! ~w~You earned ~w~~b~${zone.HeistReward:N0}~b~.");
-                        Game.Player.WantedLevel = 0;
 
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "Important",
+                            $"~g~Heist Completed! ~w~Your cut: ~b~${zone.HeistReward:N0}~w~.~n~I’ve got other shipments for you… stay sharp.",
+                            true,
+                            false
+                        );
+
+
+                        Game.Player.WantedLevel = 0;
                         heistActive[zone] = false;
-                        
 
                         // Make player leave vehicle
                         if (Game.Player.Character.IsInVehicle())
@@ -678,7 +1360,7 @@ namespace moreammunation
                         playerVehicle.IsDriveable = false;
                         playerVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
                         playerVehicle.AreBrakeLightsOn = true;
-
+                        
                         // Mark heist as complete
                         heistActive[zone] = false;
                         lastHeistEndTime = DateTime.Now;
@@ -703,7 +1385,14 @@ namespace moreammunation
                 }
                 else // Vehicle destroyed or null
                 {
-                    GTA.UI.Notification.Show("~r~Heist Failed! The Weapons Got Damaged.");
+                    GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "Important",
+                            $"~r~Heist Failed! The Weapons Got Damaged.",
+                            true,
+                            false
+                        );
                     heistActive[zone] = false;
                     activeHeistVehicle = null;
                     if (heistBlip != null && heistBlip.Exists())
@@ -716,7 +1405,15 @@ namespace moreammunation
                 // Player dead failure
                 if (Game.Player.IsDead)
                 {
-                    GTA.UI.Notification.Show("~r~Heist Failed! You Got Wasted.");
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",                               
+                        "Important",                 
+                        $"~r~Heist Failed! You Got Wasted.", 
+                        true,                                
+                        false                                
+                    );
+
                     heistActive[zone] = false;
                     activeHeistVehicle = null;
                     if (heistBlip != null && heistBlip.Exists())
@@ -739,6 +1436,20 @@ namespace moreammunation
                 }
             }
 
+            
+            for (int i = pedsPendingDeletion.Count - 1; i >= 0; i--)
+            {
+                var (ped, deleteAt) = pedsPendingDeletion[i];
+                if (DateTime.Now >= deleteAt)
+                {
+                    if (ped != null && ped.Exists())
+                        ped.Delete();
+
+                    pedsPendingDeletion.RemoveAt(i);
+                }
+            }
+
+
 
             // Update the global reference to the nearest vehicle for OnKeyUp
             vehicle = nearestVehicle;
@@ -746,133 +1457,42 @@ namespace moreammunation
             // Process LemonUI menu pool
             pool.Process();
         }
-
-        
-        private void LoadarmoryZonePositions()
+        private void AggroPedsInZone(ArmoryZone zone)
         {
-            int zoneIndex = 1;
-            while (true)
+            foreach (var pair in pedZoneMapping)
             {
-                float x = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationX", float.NaN);
-                float y = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationY", float.NaN);
-                float z = config.GetValue<float>($"ArmoryZone{zoneIndex}", "LocationZ", float.NaN);
-                if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z))
-                    break;
+                Ped ped = pair.Key;
+                ArmoryZone pedZone = pair.Value;
 
-                string blipSpriteString = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipSprite", "ammunation");
-                string blipColorString = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipColor", "BlueLight");
-                string blipName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "BlipName", $"Armory {zoneIndex}");
-                bool spawnVehicle = config.GetValue<bool>($"ArmoryZone{zoneIndex}", "DeliveryVehicle", true);
-                string vehicleName = config.GetValue<string>($"ArmoryZone{zoneIndex}", "VehicleName", "mule");
-
-                armoryZones.Add(new ArmoryZone()
+                if (ped != null && ped.Exists() && !ped.IsDead && pedZone == zone)
                 {
-                    Position = new Vector3(x, y, z),
-                    BlipSprite = blipSpriteString,
-                    BlipColor = blipColorString,
-                    BlipName = blipName,
-                    SpawnVehicle = spawnVehicle,
-                    VehicleName = vehicleName,
-                    HeistReward = config.GetValue<int>($"ArmoryZone{zoneIndex}", "heistReward", 110000),
+                    // Make ped hostile
+                    ped.RelationshipGroup = RelationshipGroupHash.Army;
+                    Function.Call(Hash.SET_PED_AS_ENEMY, ped.Handle, true);
+                    Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped.Handle, 46, true);
+                    Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped.Handle, 5, true);
+                    Function.Call(Hash.SET_PED_ACCURACY, ped.Handle, 50);
 
-                });
-
-                zoneIndex++;
-            }
-
-            GTA.UI.Notification.Show(
-                GTA.UI.NotificationIcon.Ammunation,         // portrait (Hao’s face)
-                "Ammunation",                               // sender name (shows above the subject)
-                "Ammunation +",                 // subject line
-                $"~w~Loaded ~b~{armoryZones.Count} ~w~new Ammunations on the map.", // message body
-                true,                                // fade in
-                false                                // blinking
-            );
-
-        }
-        private void CleanupExistingArmoryVehicles()
-        {
-            foreach (var vehicle in World.GetAllVehicles())
-            {
-                foreach (var zone in armoryZones)
-                {
-                    if (vehicle.Model.Hash == new Model(zone.VehicleName).Hash)
+                    // Give them a weapon if they don’t have one
+                    if (ped.Weapons.Current.Hash == WeaponHash.Unarmed)
                     {
-                        if (vehicle.Exists())
-                            vehicle.Delete();
-                    }
-                }
-            }
-
-            vehicleBlips.Clear();
-            vehiclesToRespawn.Clear();
-        }
-
-        private void CreatearmoryZoneBlips()
-        {
-            foreach (var zone in armoryZones)
-            {
-                if (zone.SpawnVehicle)
-                {
-                    // --- Spawn vehicle ---
-                    Model vehicleModel = new Model(zone.VehicleName);
-                    if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
-                    {
-                        vehicleModel.Request(500);
-                        while (!vehicleModel.IsLoaded) Script.Yield();
-
-                        Vehicle vehicle = World.CreateVehicle(vehicleModel, zone.Position + new Vector3(2f, 2f, 0f));
-                        vehicle.IsPersistent = true;
-                        vehicle.AreLightsOn = true;
-                        vehicle.AreBrakeLightsOn = true;
-                        vehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
-                        vehicle.IsDriveable = false;
-
-                        // Decide which door to open
-                        int doorIndex = 5; // try trunk first
-
-                        // Check if the trunk exists
-                        if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
-                        {
-                            // If no trunk, use rear right door (index 2)
-                            doorIndex = 2;
-
-                            // If even door 2 doesn't exist, just use door 0 (front left) as a fallback
-                            if (!Function.Call<bool>(Hash.SET_VEHICLE_DOOR_OPEN, vehicle.Handle, doorIndex))
-                            {
-                                doorIndex = 0;
-                            }
-                        }
-
-                        // --- Create blip attached to vehicle ---
-                        int vehicleBlipHandle = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, vehicle.Handle);
-                        Function.Call(Hash.SET_BLIP_SPRITE, vehicleBlipHandle, (int)GetBlipSprite(zone.BlipSprite));
-                        Function.Call(Hash.SET_BLIP_COLOUR, vehicleBlipHandle, (int)GetBlipColor(zone.BlipColor));
-                        Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
-                        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, zone.BlipName);
-                        Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, vehicleBlipHandle);
-
-                        Blip vehicleBlipObj = new Blip(vehicleBlipHandle);
-                        vehicleBlips.Add(vehicle, vehicleBlipObj);
-                        vehicleZoneMapping[vehicle] = zone;
-
-
+                        ped.Weapons.Give(WeaponHash.MicroSMG, 100, true, true);
                     }
 
-                    else
-                    {
-                        Notification.Show($"~r~Failed to load {zone.VehicleName}");
-                    }
+                    // Assign combat task
+                    Function.Call(Hash.TASK_COMBAT_PED, ped.Handle, Game.Player.Character.Handle, 0, 16);
 
-                }
-                else
-                {
-                    // --- Create static zone blip ---
-                    Blip zoneBlip = World.CreateBlip(zone.Position);
-                    zoneBlip.Sprite = GetBlipSprite(zone.BlipSprite);
-                    zoneBlip.Color = GetBlipColor(zone.BlipColor);
-                    zoneBlip.Name = zone.BlipName;
-                    staticZoneBlips.Add(zoneBlip);
+                    // Add blip if not already present
+                    if (!hostilePedBlips.ContainsKey(ped))
+                    {
+                        Blip pedBlip = ped.AddBlip();
+                        pedBlip.Color = BlipColor.Red;
+                        pedBlip.Scale = 0.8f;
+                        pedBlip.IsShortRange = false;
+                        pedBlip.Name = "Ammunation Guards";
+                        Function.Call(Hash.SET_BLIP_AS_FRIENDLY, pedBlip.Handle, false);
+                        hostilePedBlips[ped] = pedBlip;
+                    }
                 }
             }
         }
@@ -902,22 +1522,43 @@ namespace moreammunation
 
 
             LoadarmoryZonePositions(); // Only loads coordinates
+            LoadHeistLocations();
 
-            string blipSpriteString = config.GetValue<string>("Blip", "Sprite", "ammunation");
-            string blipColorString = config.GetValue<string>("Blip", "Color", "BlueLight");
-            string blipName = config.GetValue<string>("Blip", "Name", "Armoury");
+            // Initialize Ifruit components
 
-            // Vehicle spawn settings
-            bool spawnvehicle = config.GetValue<bool>("VehicleOptions", "DeliveryVehicle", true);
-            string vehicleName = config.GetValue<string>("VehicleOptions", "VehicleName", "mule");
+            // Custom phone creation
+            _iFruit = new CustomiFruit();
 
+            // Wallpaper customization
+            // Game phone wallpaper:
+            _iFruit.SetWallpaper(Wallpaper.Orange8Bit);
+            // Game texture wallpaper (ytd file)
+            // Warning: since we cannot choose the texture inside the texture dictionary, the game will take the texture that have the same name as the ytd file.
+            // ie: "prop_screen_dctl.ytd" file has a "prop_screen_dctl" texture inside it, so it will work.
+            _iFruit.SetWallpaper("prop_screen_dctl");
 
+            // Buttons customization
+            _iFruit.LeftButtonColor = System.Drawing.Color.LimeGreen;
+            _iFruit.CenterButtonColor = System.Drawing.Color.Orange;
+            _iFruit.RightButtonColor = System.Drawing.Color.Purple;
+            _iFruit.LeftButtonIcon = SoftKeyIcon.Police;
+            _iFruit.CenterButtonIcon = SoftKeyIcon.Fire;
+            _iFruit.RightButtonIcon = SoftKeyIcon.Website;
 
+            // New contact (wait 4 seconds (4000ms) before picking up the phone)
+            iFruitContact contactAgentSteele = new iFruitContact("Agent Steele")
+            {
+                DialTimeout = 4000,            // Delay before answering
+                Active = true,                 // true = the contact is available and will answer the phone
+                Icon = ContactIcon.MP_ArmyContact     // Contact's icon
+            };
+            contactAgentSteele.Answered += ContactAnswered;   // Linking the Answered event with our function
+            _iFruit.Contacts.Add(contactAgentSteele);         // Add the contact to the phone
 
-
+            
 
             // Initialize LemonUI components
-            
+
             pool = new ObjectPool();
             armoryMenu = new NativeMenu(
                 "",
