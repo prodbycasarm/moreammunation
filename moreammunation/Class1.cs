@@ -367,6 +367,10 @@ namespace moreammunation
         // Added List of Contact Heist Locations
         private List<HeistLocation> heistLocations = new List<HeistLocation>();
         private HeistLocation activeHeistLocation;
+        private bool ContactHeistActive()
+        {
+            return activeHeistVehicle != null && activeHeistVehicle.Exists();
+        }
 
         private DateTime? vehicleDestroyedTime = null;
 
@@ -689,7 +693,7 @@ namespace moreammunation
         }
         private void ContactAnswered(iFruitContact contact)
         {
-            _iFruit.Close(5000);
+            _iFruit.Close(2000);
 
             // Create the heist menu only once
             if (armoryHeistMenu == null)
@@ -708,26 +712,87 @@ namespace moreammunation
 
                 pool.Add(armoryHeistMenu);
 
+                // --- Create buttons ---
                 var startHeistItem = new NativeItem("Start Weapon Destruction Mission");
+                var exitHeistItem = new NativeItem("Abort Mission");
+
+                // Initially, you can only start a mission
+                startHeistItem.Enabled = true;
+                exitHeistItem.Enabled = false;
+
+                // --- Start mission ---
                 startHeistItem.Activated += (s, e) =>
                 {
+                    if (ContactHeistActive()) return;
+
                     StartWeaponDeliveryHeist();
+
                     GTA.UI.Notification.Show(
                         GTA.UI.NotificationIcon.MpArmyContact,
                         "Agent Steele",
                         "",
                         $"~w~Alright, I’ve marked the target vehicle on your GPS. Head to ~y~{activeHeistLocation.Name}~w~ and move fast.",
-                        true,
-                        false
+                        false,
+                        true
                     );
-                    // Call your heist start logic here
+
+                    // Toggle menu button states
+                    startHeistItem.Enabled = false;
+                    exitHeistItem.Enabled = true;
                 };
+
+                // --- Exit / Abort mission ---
+                exitHeistItem.Activated += (s, e) =>
+                {
+                    if (!ContactHeistActive())
+                    {
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "",
+                            "~w~No active mission to abort.",
+                            false,
+                            true
+                        );
+                        return;
+                    }
+
+                    ExitWeaponDeliveryHeist();
+
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "",
+                        "~w~Alright, mission aborted. Let me know when you're ready again.",
+                        false,
+                        true
+                    );
+
+                    // Toggle menu button states back
+                    startHeistItem.Enabled = true;
+                    exitHeistItem.Enabled = false;
+                };
+
                 armoryHeistMenu.Add(startHeistItem);
+                armoryHeistMenu.Add(exitHeistItem);
             }
 
-            // Open the new menu
+            // Always update menu state when reopening
+            if (ContactHeistActive())
+            {
+                armoryHeistMenu.Items[0].Enabled = false; // Start
+                armoryHeistMenu.Items[1].Enabled = true;  // Exit
+            }
+            else
+            {
+                armoryHeistMenu.Items[0].Enabled = true;
+                armoryHeistMenu.Items[1].Enabled = false;
+            }
+
+            // Open the menu
             armoryHeistMenu.Visible = true;
         }
+
         private void LoadHeistLocations()
         {
             string folderPath = @"scripts\MoreAmmunationsMod\ContactMissions";
@@ -786,13 +851,38 @@ namespace moreammunation
                 }
             }
         }
+        
+        private void ExitWeaponDeliveryHeist()
+        {
+
+            armoryHeistMenu.Visible = false;
+            // Remove heist blip
+            if (heistBlip != null && heistBlip.Exists())
+                heistBlip.Delete();
+            // Delete active heist vehicle
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+            {
+                activeHeistVehicle.MarkAsNoLongerNeeded();
+                activeHeistVehicle.Delete();
+                activeHeistVehicle = null;
+            }
+            // Reset heist active flags
+            foreach (var zone in armoryZones)
+            {
+                heistActive[zone] = false;
+            }
+            lastHeistEndTime = DateTime.Now;
+        }
+
         private void StartWeaponDeliveryHeist()
         {
+
             if (heistLocations.Count == 0)
             {
                 GTA.UI.Notification.Show("~r~No More Ammunations locations found.");
                 return;
             }
+
             armoryHeistMenu.Visible = false;
             // Pick a random location
             Random rnd = new Random();
