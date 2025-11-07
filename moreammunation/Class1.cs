@@ -63,6 +63,8 @@ namespace moreammunation
         public float Radius { get; set; }
         public string Description { get; set; }
 
+        public int Reward;
+
         // Vehicle details for the heist
         public string VehicleModel { get; set; } = null;
         public Vector3 VehicleOffset { get; set; } = Vector3.Zero;
@@ -365,6 +367,8 @@ namespace moreammunation
         // Added List of Contact Heist Locations
         private List<HeistLocation> heistLocations = new List<HeistLocation>();
         private HeistLocation activeHeistLocation;
+
+        private DateTime? vehicleDestroyedTime = null;
 
         //On Site Heist
         private bool AnyHeistActive()
@@ -704,11 +708,18 @@ namespace moreammunation
 
                 pool.Add(armoryHeistMenu);
 
-                var startHeistItem = new NativeItem("Start Weapon Delivery Heist");
+                var startHeistItem = new NativeItem("Start Weapon Destruction Mission");
                 startHeistItem.Activated += (s, e) =>
                 {
                     StartWeaponDeliveryHeist();
-                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.MpArmyContact, "Agent Steele", "", "~w~Alright, I’ve marked the target vehicle on your GPS. Move fast.", true, false);
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "",
+                        $"~w~Alright, I’ve marked the target vehicle on your GPS. Head to ~y~{activeHeistLocation.Name}~w~ and move fast.",
+                        true,
+                        false
+                    );
                     // Call your heist start logic here
                 };
                 armoryHeistMenu.Add(startHeistItem);
@@ -745,13 +756,14 @@ namespace moreammunation
                         float y = float.Parse(node["PositionY"].InnerText);
                         float z = float.Parse(node["PositionZ"].InnerText);
                         float radius = float.Parse(node["Radius"].InnerText);
-
+                        float reward = float.Parse(node["Reward"].InnerText);
                         HeistLocation loc = new HeistLocation
                         {
                             Name = node["Name"].InnerText,
                             Position = new Vector3(x, y, z),
                             Radius = radius,
-                            Description = node["Description"].InnerText
+                            Description = node["Description"].InnerText,
+                            Reward = (int)reward
                         };
 
                         // Optional vehicle node
@@ -773,8 +785,6 @@ namespace moreammunation
                     GTA.UI.Notification.Show($"~r~Error loading: {Path.GetFileName(file)} | {ex.Message}");
                 }
             }
-
-            GTA.UI.Notification.Show($"~g~Loaded {heistLocations.Count} More Ammunations zones.");
         }
         private void StartWeaponDeliveryHeist()
         {
@@ -783,7 +793,7 @@ namespace moreammunation
                 GTA.UI.Notification.Show("~r~No More Ammunations locations found.");
                 return;
             }
-
+            armoryHeistMenu.Visible = false;
             // Pick a random location
             Random rnd = new Random();
             activeHeistLocation = heistLocations[rnd.Next(heistLocations.Count)];
@@ -793,13 +803,13 @@ namespace moreammunation
                 heistBlip.Delete();
 
 
-  
-                
 
 
+            
 
-                // Spawn vehicle if defined
-                if (!string.IsNullOrEmpty(activeHeistLocation.VehicleModel))
+
+            // Spawn vehicle if defined
+            if (!string.IsNullOrEmpty(activeHeistLocation.VehicleModel))
                 {
                     Model vehicleModel = new Model(activeHeistLocation.VehicleModel);
                     if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
@@ -829,9 +839,12 @@ namespace moreammunation
                         GTA.UI.Notification.Show($"~r~Failed to load vehicle model: {activeHeistLocation.VehicleModel}");
                     }
                 }
+            if (activeHeistVehicle.IsDead)
+            {
+                
+            }
 
-            GTA.UI.Notification.Show($"~b~Heist started!~s~ Head to ~y~{activeHeistLocation.Name}~s~.");
-        }
+            }
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
             if (!Game.Player.Character.IsOnFoot || !isNearArmoryZone)
@@ -993,6 +1006,53 @@ namespace moreammunation
                         3000
                     );
                 }
+            }
+
+            // Contact Heist Vehicle Destroyed Logic
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+            {
+                if (activeHeistVehicle.IsDead)
+                {
+                    
+
+                    // Record the time once
+                    if (vehicleDestroyedTime == null)
+                    {
+                        vehicleDestroyedTime = DateTime.Now;
+
+                        Game.Player.Money += (int)activeHeistLocation.Reward;
+
+
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "Important",
+                            $"~g~Mission Completed! ~w~Your cut: ~y~${activeHeistLocation.Reward}~w~.~n~I’ve got other targets for you… stay sharp.",
+                            false,
+                            true
+                        );
+                        // Remove blip right away
+                        if (heistBlip != null && heistBlip.Exists())
+                        {
+                            heistBlip.Delete();
+                            heistBlip = null;
+                        }
+                        
+                    }
+                }
+            }
+
+            // After 10 seconds, delete the vehicle (non-blocking)
+            if (vehicleDestroyedTime != null && (DateTime.Now - vehicleDestroyedTime.Value).TotalSeconds >= 10)
+            {
+                if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+                {
+                    activeHeistVehicle.MarkAsNoLongerNeeded();
+                    activeHeistVehicle.Delete();
+                }
+
+                activeHeistVehicle = null;
+                vehicleDestroyedTime = null; // Reset timer
             }
 
             // Detect player death and respawn
@@ -1189,28 +1249,7 @@ namespace moreammunation
 
 
 
-
-            // 🧨 Logic for destroyed contact heist vehicle
-            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
-            {
-                // If it's destroyed or no longer exists properly
-                if (activeHeistVehicle.IsDead)
-                {
-                    // Delete blip if it exists
-                    if (heistBlip != null && heistBlip.Exists())
-                    {
-                        heistBlip.Delete();
-                        heistBlip = null;
-                    }
-
-                    // Delete the vehicle
-                    activeHeistVehicle.MarkAsNoLongerNeeded();
-                    activeHeistVehicle.Delete();
-                    activeHeistVehicle = null;
-
-                    GTA.UI.Notification.Show("~r~Contact vehicle destroyed!");
-                }
-            }
+            
 
 
             // Logic for destroyed vehicles
