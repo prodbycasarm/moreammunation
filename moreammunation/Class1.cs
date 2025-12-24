@@ -56,16 +56,34 @@ namespace moreammunation
         public Ped Ped;
         public DateTime RespawnTime;
     }
+    public class AreaVehicle
+    {
+        public string ModelName { get; set; }
+        public Vector3 Position { get; set; } = Vector3.Zero;
+        public float Rotation { get; set; }
+    }
+
     public class HeistLocation
     {
         public string Name { get; set; }
-        public Vector3 Position { get; set; }
+        public Vector3 Position { get; set; } // central heist location
         public float Radius { get; set; }
         public string Description { get; set; }
 
-        // Vehicle details for the heist
+        public int Reward;
+
+        // Target Vehicle details
         public string VehicleModel { get; set; } = null;
-        public Vector3 VehicleOffset { get; set; } = Vector3.Zero;
+
+        //Vehcle Driver Model
+        public string VehicleDriverModel;
+
+
+        public Vector3 VehiclePosition { get; set; } = Vector3.Zero;
+        public float TargetRotation { get; set; }
+
+        // Extra vehicles at the location
+        public List<AreaVehicle> AreaVehicles { get; set; } = new List<AreaVehicle>();
     }
 
     public class Main : Script
@@ -365,6 +383,19 @@ namespace moreammunation
         // Added List of Contact Heist Locations
         private List<HeistLocation> heistLocations = new List<HeistLocation>();
         private HeistLocation activeHeistLocation;
+        private List<Vehicle> spawnedAreaVehicles = new List<Vehicle>();
+
+        private bool ContactHeistActive()
+        {
+            return activeHeistVehicle != null && activeHeistVehicle.Exists();
+        }
+
+        private DateTime? vehicleDestroyedTime = null;
+        private DateTime? npcVehiclesCleanupTime = null;
+
+        // Track destruction time per NPC vehicle
+        private readonly Dictionary<Vehicle, DateTime> npcVehicleDestroyedTimes = new Dictionary<Vehicle, DateTime>();
+        private const double NpcVehicleDeleteDelaySeconds = 10.0; // same as main heist vehicle
 
         //On Site Heist
         private bool AnyHeistActive()
@@ -385,6 +416,8 @@ namespace moreammunation
         private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
         private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
         private Dictionary<Vehicle, ArmoryZone> vehicleZoneMapping = new Dictionary<Vehicle, ArmoryZone>();
+        private readonly List<Vehicle> npcContactVehicles = new List<Vehicle>();
+        private readonly List<Ped> npcContactPeds = new List<Ped>();
         private Vehicle activeHeistVehicle = null;
         private DateTime lastHeistEndTime = DateTime.MinValue;
         private readonly TimeSpan heistCooldown = TimeSpan.FromSeconds(11);
@@ -405,37 +438,155 @@ namespace moreammunation
 
         private void CleanupExistingArmoryEntities()
         {
-            // Remove vehicles belonging to zones
+            // 1) Delete zone display vehicles (the ones created by CreatearmoryZoneBlips)
             foreach (var vehicle in World.GetAllVehicles())
             {
                 foreach (var zone in armoryZones)
                 {
-                    if (vehicle.Model.Hash == new Model(zone.VehicleName).Hash)
+                    if (!string.IsNullOrEmpty(zone.VehicleName))
                     {
-                        if (vehicle.Exists())
-                            vehicle.Delete();
+                        var zoneModel = new Model(zone.VehicleName);
+                        if (vehicle.Model.Hash == zoneModel.Hash)
+                        {
+                            if (vehicle.Exists())
+                                vehicle.Delete();
+                        }
                     }
                 }
             }
 
+            // 2) Delete any leftover heist vehicles (target vehicle + area vehicles)
+            //    We scan all heistLocations (not just activeHeistLocation) so reloads are covered.
+            var allHeistVehicleModelHashes = new HashSet<int>();
+            foreach (var hl in heistLocations)
+            {
+                if (!string.IsNullOrEmpty(hl.VehicleModel))
+                    allHeistVehicleModelHashes.Add(new Model(hl.VehicleModel).Hash);
+
+                foreach (var av in hl.AreaVehicles)
+                {
+                    if (!string.IsNullOrEmpty(av.ModelName))
+                        allHeistVehicleModelHashes.Add(new Model(av.ModelName).Hash);
+                }
+            }
+
+            if (allHeistVehicleModelHashes.Count > 0)
+            {
+                foreach (var worldVeh in World.GetAllVehicles())
+                {
+                    if (worldVeh == null || !worldVeh.Exists()) continue;
+
+                    if (allHeistVehicleModelHashes.Contains(worldVeh.Model.Hash))
+                    {
+                        try
+                        {
+                            // delete any blip attached
+                            if (worldVeh.AttachedBlip != null && worldVeh.AttachedBlip.Exists())
+                                worldVeh.AttachedBlip.Delete();
+
+                            worldVeh.MarkAsNoLongerNeeded();
+                            worldVeh.Delete();
+                        }
+                        catch { /* swallow errors during cleanup */ }
+                    }
+                }
+            }
+
+            // 3) Delete any vehicles we explicitly tracked (runtime)
+            if (spawnedAreaVehicles != null)
+            {
+                foreach (var v in spawnedAreaVehicles.ToList())
+                {
+                    try
+                    {
+                        if (v != null && v.Exists())
+                        {
+                            if (v.AttachedBlip != null && v.AttachedBlip.Exists())
+                                v.AttachedBlip.Delete();
+
+                            v.MarkAsNoLongerNeeded();
+                            v.Delete();
+                        }
+                    }
+                    catch { }
+
+                }
+                spawnedAreaVehicles.Clear();
+            }
+
+            // Also clear npcContactVehicles (in case some references survived)
+            if (npcContactVehicles != null)
+            {
+                foreach (var v in npcContactVehicles.ToList())
+                {
+                    try
+                    {
+                        if (v != null && v.Exists())
+                        {
+                            if (v.AttachedBlip != null && v.AttachedBlip.Exists())
+                                v.AttachedBlip.Delete();
+
+                            v.MarkAsNoLongerNeeded();
+                            v.Delete();
+                        }
+                    }
+                    catch { }
+                }
+                npcContactVehicles.Clear();
+            }
+
+            if (npcContactPeds != null)
+            {
+                foreach (var v in npcContactPeds.ToList())
+                {
+                    try
+                    {
+                        if (v != null && v.Exists())
+                        {
+                            if (v.AttachedBlip != null && v.AttachedBlip.Exists())
+                                v.AttachedBlip.Delete();
+
+                            v.MarkAsNoLongerNeeded();
+                            v.Delete();
+                        }
+                    }
+                    catch { }
+                }
+                npcContactPeds.Clear();
+            }
+
+
+            
+
+            // Clear vehicle blip maps and respawn queues
+            foreach (var pair in vehicleBlips.ToList())
+            {
+                try
+                {
+                    if (pair.Value != null && pair.Value.Exists())
+                        pair.Value.Delete();
+                }
+                catch { }
+            }
             vehicleBlips.Clear();
             vehiclesToRespawn.Clear();
 
-            // Remove NPCs belonging to zones
+            // Remove NPCs belonging to zones (scan world peds matching zone NPC model)
             foreach (var ped in World.GetAllPeds())
             {
                 foreach (var zone in armoryZones)
                 {
-                    if (ped.Model.Hash == new Model(zone.NpcModel).Hash)
+                    if (!string.IsNullOrEmpty(zone.NpcModel))
                     {
-                        if (ped.Exists())
-                            ped.Delete();
+                        if (ped.Model.Hash == new Model(zone.NpcModel).Hash)
+                        {
+                            if (ped.Exists()) ped.Delete();
+                        }
                     }
                 }
             }
 
-
-            // Contact heist vehicle 
+            // Delete active heist vehicle and cleanup its blip
             if (activeHeistVehicle != null && activeHeistVehicle.Exists())
             {
                 if (heistBlip != null && heistBlip.Exists())
@@ -446,17 +597,17 @@ namespace moreammunation
                 activeHeistVehicle = null;
             }
 
+            // Clear peds structures
             spawnedPeds.Clear();
             pedZoneMapping.Clear();
 
             // Remove static zone blips
             foreach (var blip in staticZoneBlips.ToList())
             {
-                if (blip.Exists())
+                if (blip != null && blip.Exists())
                     blip.Delete();
             }
             staticZoneBlips.Clear();
-
         }
         private void OnAborted(object sender, EventArgs e)
         {
@@ -488,7 +639,7 @@ namespace moreammunation
             }
             spawnedPeds.Clear();
 
-            // Contact heist vehicle 
+            // Contact heist  target vehicle 
             if (activeHeistVehicle != null && activeHeistVehicle.Exists())
             {
                 if (heistBlip != null && heistBlip.Exists())
@@ -498,6 +649,48 @@ namespace moreammunation
                 activeHeistVehicle.Delete();
                 activeHeistVehicle = null;
             }
+
+            if (npcContactVehicles != null && npcContactVehicles.Count > 0)
+            {
+                foreach (var veh in npcContactVehicles)
+                {
+                    if (veh != null && veh.Exists())
+                    {
+                        if (veh.AttachedBlip != null && veh.AttachedBlip.Exists())
+                            veh.AttachedBlip.Delete();
+
+                        veh.MarkAsNoLongerNeeded();
+                        veh.Delete();
+                    }
+                }
+
+                npcContactVehicles.Clear();
+                spawnedAreaVehicles.Clear();
+                npcVehicleDestroyedTimes.Clear();
+
+            }
+
+            if (npcContactPeds != null && npcContactPeds.Count > 0)
+            {
+                foreach (var ped in npcContactPeds)
+                {
+                    if (ped != null && ped.Exists())
+                    {
+                        if (ped.AttachedBlip != null && ped.AttachedBlip.Exists())
+                            ped.AttachedBlip.Delete();
+
+                        ped.MarkAsNoLongerNeeded();
+                        ped.Delete();
+                    }
+                }
+
+                npcContactPeds.Clear();
+
+
+            }
+
+            
+
         }
         private void LoadarmoryZonePositions()
         {
@@ -685,7 +878,7 @@ namespace moreammunation
         }
         private void ContactAnswered(iFruitContact contact)
         {
-            _iFruit.Close(5000);
+            _iFruit.Close(2000);
 
             // Create the heist menu only once
             if (armoryHeistMenu == null)
@@ -704,19 +897,87 @@ namespace moreammunation
 
                 pool.Add(armoryHeistMenu);
 
-                var startHeistItem = new NativeItem("Start Weapon Delivery Heist");
+                // --- Create buttons ---
+                var startHeistItem = new NativeItem("Start Weapon Destruction Mission");
+                var exitHeistItem = new NativeItem("Abort Mission");
+
+                // Initially, you can only start a mission
+                startHeistItem.Enabled = true;
+                exitHeistItem.Enabled = false;
+
+                // --- Start mission ---
                 startHeistItem.Activated += (s, e) =>
                 {
+                    if (ContactHeistActive()) return;
+
                     StartWeaponDeliveryHeist();
-                    GTA.UI.Notification.Show(GTA.UI.NotificationIcon.MpArmyContact, "Agent Steele", "", "~w~Alright, I’ve marked the target vehicle on your GPS. Move fast.", true, false);
-                    // Call your heist start logic here
+
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "",
+                        $"~w~Alright, I’ve marked the target vehicle on your GPS. Head to ~y~{activeHeistLocation.Name}~w~ and move fast.",
+                        false,
+                        true
+                    );
+
+                    // Toggle menu button states
+                    startHeistItem.Enabled = false;
+                    exitHeistItem.Enabled = true;
                 };
+
+                // --- Exit / Abort mission ---
+                exitHeistItem.Activated += (s, e) =>
+                {
+                    if (!ContactHeistActive())
+                    {
+                        GTA.UI.Notification.Show(
+                            GTA.UI.NotificationIcon.MpArmyContact,
+                            "Agent Steele",
+                            "",
+                            "~w~No active mission to abort.",
+                            false,
+                            true
+                        );
+                        return;
+                    }
+
+                    ExitWeaponDeliveryHeist();
+
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "",
+                        "~w~Alright, mission aborted. Let me know when you're ready again.",
+                        false,
+                        true
+                    );
+
+                    // Toggle menu button states back
+                    startHeistItem.Enabled = true;
+                    exitHeistItem.Enabled = false;
+                };
+
                 armoryHeistMenu.Add(startHeistItem);
+                armoryHeistMenu.Add(exitHeistItem);
             }
 
-            // Open the new menu
+            // Always update menu state when reopening
+            if (ContactHeistActive())
+            {
+                armoryHeistMenu.Items[0].Enabled = false; // Start
+                armoryHeistMenu.Items[1].Enabled = true;  // Exit
+            }
+            else
+            {
+                armoryHeistMenu.Items[0].Enabled = true;
+                armoryHeistMenu.Items[1].Enabled = false;
+            }
+
+            // Open the menu
             armoryHeistMenu.Visible = true;
         }
+
         private void LoadHeistLocations()
         {
             string folderPath = @"scripts\MoreAmmunationsMod\ContactMissions";
@@ -745,24 +1006,59 @@ namespace moreammunation
                         float y = float.Parse(node["PositionY"].InnerText);
                         float z = float.Parse(node["PositionZ"].InnerText);
                         float radius = float.Parse(node["Radius"].InnerText);
+                        float reward = float.Parse(node["Reward"].InnerText);
 
                         HeistLocation loc = new HeistLocation
                         {
                             Name = node["Name"].InnerText,
                             Position = new Vector3(x, y, z),
                             Radius = radius,
-                            Description = node["Description"].InnerText
+                            Description = node["Description"].InnerText,
+                            Reward = (int)reward
                         };
 
-                        // Optional vehicle node
-                        var vehicleNode = node.SelectSingleNode("Vehicle");
+                        // Target vehicle
+                        var vehicleNode = node.SelectSingleNode("TargetVehicle");
                         if (vehicleNode != null)
                         {
-                            loc.VehicleModel = vehicleNode["ModelName"]?.InnerText;
-                            float ox = float.Parse(vehicleNode["OffsetX"]?.InnerText ?? "0");
-                            float oy = float.Parse(vehicleNode["OffsetY"]?.InnerText ?? "0");
-                            float oz = float.Parse(vehicleNode["OffsetZ"]?.InnerText ?? "0");
-                            loc.VehicleOffset = new Vector3(ox, oy, oz);
+                            loc.VehicleModel = vehicleNode["TargetModelName"]?.InnerText;
+                            loc.VehicleDriverModel = vehicleNode["TargetVehicleDriverModel"]?.InnerText;
+                            // Use absolute world position instead of offset
+                            float vx = float.Parse(vehicleNode["PositionX"]?.InnerText ?? "0");
+                            float vy = float.Parse(vehicleNode["PositionY"]?.InnerText ?? "0");
+                            float vz = float.Parse(vehicleNode["PositionZ"]?.InnerText ?? "0");
+                            float vheading = float.Parse(vehicleNode["Rotation"]?.InnerText ?? "0");
+                            loc.VehiclePosition = new Vector3(vx, vy, vz);
+                            loc.TargetRotation = vheading;
+                        }
+
+                        // Area Vehicles
+                        var areaVehiclesNode = node.SelectSingleNode("AreaVehicles");
+                        if (areaVehiclesNode != null)
+                        {
+                            foreach (XmlNode vehNode in areaVehiclesNode.SelectNodes("Vehicle"))
+                            {
+                                try
+                                {
+                                    string model = vehNode["ModelName"]?.InnerText;
+
+                                    // Absolute world position
+                                    float px = float.Parse(vehNode["PositionX"]?.InnerText ?? "0");
+                                    float py = float.Parse(vehNode["PositionY"]?.InnerText ?? "0");
+                                    float pz = float.Parse(vehNode["PositionZ"]?.InnerText ?? "0");
+                                    float pheading = float.Parse(vehNode["Rotation"]?.InnerText ?? "0");
+                                    loc.AreaVehicles.Add(new AreaVehicle
+                                    {
+                                        ModelName = model,
+                                        Position = new Vector3(px, py, pz),
+                                        Rotation = pheading
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    GTA.UI.Notification.Show($"~r~Error loading AreaVehicle: {ex.Message}");
+                                }
+                            }
                         }
 
                         heistLocations.Add(loc);
@@ -773,17 +1069,66 @@ namespace moreammunation
                     GTA.UI.Notification.Show($"~r~Error loading: {Path.GetFileName(file)} | {ex.Message}");
                 }
             }
-
-            GTA.UI.Notification.Show($"~g~Loaded {heistLocations.Count} More Ammunations zones.");
         }
+
+        private void ExitWeaponDeliveryHeist()
+        {
+
+            armoryHeistMenu.Visible = false;
+            // Remove heist blip
+            if (heistBlip != null && heistBlip.Exists())
+                heistBlip.Delete();
+            // Delete active heist vehicle
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+            {
+                activeHeistVehicle.MarkAsNoLongerNeeded();
+
+                activeHeistVehicle.Delete();
+                activeHeistVehicle = null;
+            }
+
+            foreach (var veh in npcContactVehicles)
+            {
+                if (veh != null && veh.Exists())
+                {
+                    veh.MarkAsNoLongerNeeded();
+                    veh.Delete();
+                }
+            }
+            npcContactVehicles.Clear();
+
+            foreach (var ped in npcContactPeds)
+            {
+                if (ped != null && ped.Exists())
+                {
+                    ped.MarkAsNoLongerNeeded();
+                    ped.Delete();
+                }
+            }
+            npcContactPeds.Clear();
+
+
+            
+
+            // Reset heist active flags
+            foreach (var zone in armoryZones)
+            {
+                heistActive[zone] = false;
+            }
+            lastHeistEndTime = DateTime.Now;
+        }
+
         private void StartWeaponDeliveryHeist()
         {
+
+
             if (heistLocations.Count == 0)
             {
                 GTA.UI.Notification.Show("~r~No More Ammunations locations found.");
                 return;
             }
 
+            armoryHeistMenu.Visible = false;
             // Pick a random location
             Random rnd = new Random();
             activeHeistLocation = heistLocations[rnd.Next(heistLocations.Count)];
@@ -792,46 +1137,136 @@ namespace moreammunation
             if (heistBlip != null && heistBlip.Exists())
                 heistBlip.Delete();
 
-
-  
-                
-
-
-
-                // Spawn vehicle if defined
-                if (!string.IsNullOrEmpty(activeHeistLocation.VehicleModel))
+            if (npcContactVehicles != null && npcContactVehicles.Count > 0)
+            {
+                foreach (var veh in npcContactVehicles)
                 {
-                    Model vehicleModel = new Model(activeHeistLocation.VehicleModel);
-                    if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
+                    if (veh != null && veh.Exists())
                     {
-                        vehicleModel.Request(500);
-                        while (!vehicleModel.IsLoaded) Script.Yield();
+                        if (veh.AttachedBlip != null && veh.AttachedBlip.Exists())
+                            veh.AttachedBlip.Delete();
 
-                        Vector3 spawnPos = activeHeistLocation.Position;
-                        if (activeHeistLocation.VehicleOffset != null)
-                            spawnPos += activeHeistLocation.VehicleOffset;
-
-                        Vehicle contactHeistVehicle = World.CreateVehicle(vehicleModel, spawnPos);
-                        contactHeistVehicle.IsPersistent = true;
-                        contactHeistVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
-                        contactHeistVehicle.AreLightsOn = true;
-                        activeHeistVehicle = contactHeistVehicle;
-
-                        // Attach blip directly to the vehicle
-                        heistBlip = contactHeistVehicle.AddBlip();
-                        heistBlip.Sprite = BlipSprite.Standard;
-                        heistBlip.Color = BlipColor.Red;
-                        heistBlip.Name = $"Weapon Delivery: {activeHeistLocation.Name}";
-                        heistBlip.ShowRoute = true;
-                    }
-                    else
-                    {
-                        GTA.UI.Notification.Show($"~r~Failed to load vehicle model: {activeHeistLocation.VehicleModel}");
+                        veh.MarkAsNoLongerNeeded();
+                        veh.Delete();
                     }
                 }
 
-            GTA.UI.Notification.Show($"~b~Heist started!~s~ Head to ~y~{activeHeistLocation.Name}~s~.");
+                npcContactVehicles.Clear();
+                spawnedAreaVehicles.Clear();
+                npcVehicleDestroyedTimes.Clear();
+
+            }
+
+            // Spawn  target vehicle if defined
+            // Spawn target vehicle if defined
+            if (!string.IsNullOrEmpty(activeHeistLocation.VehicleModel))
+            {
+                Model vehicleModel = new Model(activeHeistLocation.VehicleModel);
+                Vehicle contactHeistVehicle = null;
+
+                if (vehicleModel.IsInCdImage && vehicleModel.IsValid)
+                {
+                    vehicleModel.Request(500);
+                    while (!vehicleModel.IsLoaded)
+                        Script.Yield();
+
+                    Vector3 spawnPos = activeHeistLocation.VehiclePosition;
+                    float heading = activeHeistLocation.TargetRotation;
+
+                    contactHeistVehicle = World.CreateVehicle(vehicleModel, spawnPos, heading);
+                    contactHeistVehicle.IsPersistent = true;
+                    contactHeistVehicle.LockStatus = VehicleLockStatus.PlayerCannotEnter;
+                    contactHeistVehicle.AreLightsOn = true;
+
+                    activeHeistVehicle = contactHeistVehicle;
+
+                    // Attach blip
+                    heistBlip = contactHeistVehicle.AddBlip();
+                    heistBlip.Sprite = BlipSprite.Adversary;
+                    heistBlip.Color = BlipColor.Red;
+                    heistBlip.Name = $"Weapon Delivery: {activeHeistLocation.Name}";
+                    heistBlip.ShowRoute = true;
+                }
+                else
+                {
+                    GTA.UI.Notification.Show(
+                        $"~r~Failed to load vehicle model: {activeHeistLocation.VehicleModel}"
+                    );
+                    return;
+                }
+
+                // 🚗 Spawn driver if defined
+                if (!string.IsNullOrEmpty(activeHeistLocation.VehicleDriverModel) &&
+                    contactHeistVehicle != null &&
+                    contactHeistVehicle.Exists())
+                {
+                    Model driverModel = new Model(activeHeistLocation.VehicleDriverModel);
+
+                    if (driverModel.IsInCdImage && driverModel.IsValid)
+                    {
+                        driverModel.Request(500);
+                        while (!driverModel.IsLoaded)
+                            Script.Yield();
+
+                        Ped driver = World.CreatePed(
+                            driverModel,
+                            contactHeistVehicle.Position + new Vector3(0f, 0f, 1f)
+                        );
+
+                        if (driver != null && driver.Exists())
+                        {
+                            driver.IsPersistent = true;
+                            driver.BlockPermanentEvents = true;
+
+                            driver.SetIntoVehicle(contactHeistVehicle, VehicleSeat.Driver);
+
+                            driver.Task.CruiseWithVehicle(
+                                contactHeistVehicle,
+                                20f,
+                                DrivingStyle.AvoidTrafficExtremely
+                            );
+
+                            driver.RelationshipGroup = Game.GenerateHash("ARMORY_GUARDS");
+
+                            npcContactPeds.Add(driver);
+                        }
+                    }
+                    else
+                    {
+                        GTA.UI.Notification.Show(
+                            $"~r~Failed to load driver model: {activeHeistLocation.VehicleDriverModel}"
+                        );
+                    }
+                }
+
+                // Spawn area vehicles
+                foreach (var av in activeHeistLocation.AreaVehicles)
+                {
+                    Model avModel = new Model(av.ModelName);
+                    if (avModel.IsInCdImage && avModel.IsValid)
+                    {
+                        avModel.Request(500);
+                        while (!avModel.IsLoaded)
+                            Script.Yield();
+
+                        Vehicle extraVehicle = World.CreateVehicle(
+                            avModel,
+                            av.Position,
+                            av.Rotation
+                        );
+
+                        extraVehicle.IsPersistent = true;
+                        extraVehicle.LockStatus = VehicleLockStatus.Locked;
+
+                        npcContactVehicles.Add(extraVehicle);
+                        spawnedAreaVehicles.Add(extraVehicle);
+                    }
+                }
+            }
+
+
         }
+
         private void OnKeyUp(object sender, KeyEventArgs e)
         {
             if (!Game.Player.Character.IsOnFoot || !isNearArmoryZone)
@@ -994,6 +1429,94 @@ namespace moreammunation
                     );
                 }
             }
+
+            // Contact Heist Vehicle Destroyed Logic
+            if (activeHeistVehicle != null && activeHeistVehicle.Exists() && activeHeistVehicle.IsDead)
+            {
+                // Record the time once
+                if (vehicleDestroyedTime == null)
+                {
+                    vehicleDestroyedTime = DateTime.Now;
+
+                    // Give player reward
+                    Game.Player.Money += activeHeistLocation.Reward;
+
+                    GTA.UI.Notification.Show(
+                        GTA.UI.NotificationIcon.MpArmyContact,
+                        "Agent Steele",
+                        "Important",
+                        $"~g~Mission Completed! ~w~Your cut: ~y~${activeHeistLocation.Reward}~w~.~n~I’ve got other targets for you… stay sharp. Next mission will be available soon!",
+                        false,
+                        true
+                    );
+
+                    // Remove main vehicle blip
+                    if (heistBlip != null && heistBlip.Exists())
+                    {
+                        heistBlip.Delete();
+                        heistBlip = null;
+                    }
+
+                    // Start cleanup timer for all spawned extra vehicles
+                    foreach (var veh in spawnedAreaVehicles)
+                    {
+                        if (veh != null && veh.Exists())
+                        {
+                            npcVehicleDestroyedTimes[veh] = DateTime.Now;
+                        }
+                    }
+                }
+            }
+
+            // After 10 seconds, delete the main vehicle
+            if (vehicleDestroyedTime != null && (DateTime.Now - vehicleDestroyedTime.Value).TotalSeconds >= 10)
+            {
+                if (activeHeistVehicle != null && activeHeistVehicle.Exists())
+                {
+                    activeHeistVehicle.MarkAsNoLongerNeeded();
+                    activeHeistVehicle.Delete();
+                }
+
+                activeHeistVehicle = null;
+                vehicleDestroyedTime = null; // Reset timer
+            }
+
+            // Delete all extra vehicles after their delay
+            if (spawnedAreaVehicles.Count > 0)
+            {
+                var toRemoveContactExtaVehicles = new List<Vehicle>();
+                foreach (var kv in npcVehicleDestroyedTimes.ToList())
+                {
+                    var veh = kv.Key;
+                    var destroyedAt = kv.Value;
+
+                    // Delete if enough time passed
+                    if (veh == null || (DateTime.Now - destroyedAt).TotalSeconds >= NpcVehicleDeleteDelaySeconds)
+                    {
+                        if (veh != null && veh.Exists())
+                        {
+                            // Remove blip
+                            if (vehicleBlips.TryGetValue(veh, out var blip) && blip.Exists())
+                            {
+                                blip.Delete();
+                                vehicleBlips.Remove(veh);
+                            }
+
+                            veh.MarkAsNoLongerNeeded();
+                            veh.Delete();
+                        }
+
+                        toRemoveContactExtaVehicles.Add(veh);
+                        spawnedAreaVehicles.Remove(veh);
+                    }
+                }
+
+                // Clean up dictionary
+                foreach (var veh in toRemoveContactExtaVehicles)
+                    npcVehicleDestroyedTimes.Remove(veh);
+            }
+
+
 
             // Detect player death and respawn
             if (Game.Player.IsDead && !wasPlayerDead)
@@ -1189,28 +1712,7 @@ namespace moreammunation
 
 
 
-
-            // 🧨 Logic for destroyed contact heist vehicle
-            if (activeHeistVehicle != null && activeHeistVehicle.Exists())
-            {
-                // If it's destroyed or no longer exists properly
-                if (activeHeistVehicle.IsDead)
-                {
-                    // Delete blip if it exists
-                    if (heistBlip != null && heistBlip.Exists())
-                    {
-                        heistBlip.Delete();
-                        heistBlip = null;
-                    }
-
-                    // Delete the vehicle
-                    activeHeistVehicle.MarkAsNoLongerNeeded();
-                    activeHeistVehicle.Delete();
-                    activeHeistVehicle = null;
-
-                    GTA.UI.Notification.Show("~r~Contact vehicle destroyed!");
-                }
-            }
+            
 
 
             // Logic for destroyed vehicles
