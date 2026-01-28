@@ -54,6 +54,14 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Class1.cs" />
+    <Compile Include="Data\Data.cs" />
+    <Compile Include="Data\WeaponPrices.cs" />
+    <Compile Include="Models\AreaVehicle.cs" />
+    <Compile Include="Models\ArmoryZone.cs" />
+    <Compile Include="Models\HeistLocation.cs" />
+    <Compile Include="Models\PedRespawn.cs" />
+    <Compile Include="Models\VehicleRespawn.cs" />
+    <Compile Include="Models\WeaponUI.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
