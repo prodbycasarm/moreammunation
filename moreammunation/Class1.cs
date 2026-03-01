@@ -1646,6 +1646,7 @@ namespace moreammunation
                     );
                 }
             }
+            // Testing: show help text when near zone without vehicle
 
             // Detect player death and respawn
             if (Game.Player.IsDead && !wasPlayerDead)
