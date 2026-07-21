@@ -348,7 +348,53 @@ namespace moreammunation
         private bool cleanupDone = false;
         private Dictionary<ArmoryZone, bool> heistActive = new Dictionary<ArmoryZone, bool>();
         private int lastWantedLevel = 0;
-        private Vector3 heistTarget = new Vector3(1746.0f, 3267.0f, 41.1f);
+        private Vector3 heistTarget;
+
+
+
+        private Random random = new Random();
+
+        private Vector3 ChooseRandomDeliveryLocation()
+        {
+            string folderPath = @"scripts\MoreAmmunationsMod\DeliveryPoints";
+
+            string[] files = Directory.GetFiles(folderPath, "*.xml", SearchOption.AllDirectories);
+
+            if (files.Length == 0)
+                return Vector3.Zero;
+
+            string file = files[random.Next(files.Length)];
+
+            XmlDocument doc = new XmlDocument();
+            doc.Load(file);
+
+            XmlNode deliveryNode = doc.SelectSingleNode("DeliveryCoordinates");
+            if (deliveryNode == null)
+                return Vector3.Zero;
+
+            List<XmlNode> areas = deliveryNode.ChildNodes
+                .Cast<XmlNode>()
+                .Where(n => n.NodeType == XmlNodeType.Element)
+                .ToList();
+
+            if (areas.Count == 0)
+                return Vector3.Zero;
+
+            XmlNode randomArea = areas[random.Next(areas.Count)];
+
+            return new Vector3(
+                float.Parse(randomArea["PositionX"].InnerText),
+                float.Parse(randomArea["PositionY"].InnerText),
+                float.Parse(randomArea["PositionZ"].InnerText)
+            );
+        }
+
+
+
+
+
+
+
         private List<(Vehicle vehicle, DateTime deleteAt)> vehiclesToDelete = new List<(Vehicle, DateTime)>();
         private Dictionary<Vehicle, ArmoryZone> vehicleZoneMapping = new Dictionary<Vehicle, ArmoryZone>();
         private readonly List<Vehicle> npcContactVehicles = new List<Vehicle>();
@@ -2169,6 +2215,7 @@ namespace moreammunation
             }
             else
             {
+                heistTarget = ChooseRandomDeliveryLocation();
                 // Start heist (wanted level)
                 if (vehicle != null)
                 {
