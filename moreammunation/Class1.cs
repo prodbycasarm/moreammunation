@@ -856,6 +856,19 @@ namespace moreammunation
         }
         private void ContactAnswered(iFruitContact contact)
         {
+            if (AnyHeistActive())
+            {
+                GTA.UI.Notification.Show(
+                    GTA.UI.NotificationIcon.MpFIBContact,
+                    "Agent 16",
+                    "Alert",
+                    "~w~I can't anwser now... Call me back once you deliver the weapons",
+                    true,
+                    false
+                );
+                _iFruit.Close(2000);
+                return;
+            }
             _iFruit.Close(2000);
 
             // Create the heist menu only once
@@ -886,6 +899,9 @@ namespace moreammunation
                 // --- Start mission ---
                 startHeistItem.Activated += (s, e) =>
                 {
+
+                    
+
                     if (ContactHeistActive()) return;
 
                     StartWeaponDeliveryHeist();
@@ -894,7 +910,7 @@ namespace moreammunation
                         GTA.UI.NotificationIcon.MpFIBContact,
                         "Agent 16",
                         "",
-                        $"~w~Alright, I’ve marked the target vehicle on your GPS. Head to ~y~{activeHeistLocation.Name}~w~ and move fast.",
+                        $"~w~Alright, I’ve marked the target on your GPS. Head to ~y~{activeHeistLocation.Name}~w~ and move fast.",
                         false,
                         true
                     );
@@ -2010,7 +2026,7 @@ namespace moreammunation
                             GTA.UI.NotificationIcon.MpFIBContact,
                             "Agent 16",
                             "Important",
-                            $"~g~Heist Completed! ~w~Your cut: ~b~${zone.HeistReward:N0}~w~.~n~I’ve got other shipments for you… stay sharp.",
+                            $"~g~Mission Completed! ~w~Your cut: ~b~${zone.HeistReward:N0}~w~.~n~I’ve got other shipments for you… stay sharp.",
                             true,
                             false
                         );
@@ -2058,7 +2074,7 @@ namespace moreammunation
                             GTA.UI.NotificationIcon.MpFIBContact,
                             "Agent 16",
                             "Important",
-                            $"~r~Heist Failed! The Weapons Got Damaged.",
+                            $"~r~Mission Failed! The weapons got destroyed...",
                             true,
                             false
                         );
@@ -2078,7 +2094,7 @@ namespace moreammunation
                         GTA.UI.NotificationIcon.MpFIBContact,
                         "Agent 16",
                         "Important",
-                        $"~r~Heist Failed! You Got Wasted.",
+                        $"~r~Mission Failed! You got wasted...",
                         true,
                         false
                     );
@@ -2128,7 +2144,7 @@ namespace moreammunation
                     GTA.UI.NotificationIcon.Ammunation,
                     "Ammu-Nation +",
                     "Alert",
-                    "~r~Armory is unavailable right now",
+                    "~w~This feature will be available once you deliver or destroy the weapons...",
                     true,
                     false
                 );
@@ -2142,10 +2158,10 @@ namespace moreammunation
             if (AnyHeistActive())
             {
                 GTA.UI.Notification.Show(
-                    GTA.UI.NotificationIcon.MpFIBContact,
-                    "Agent 16",
+                    GTA.UI.NotificationIcon.Ammunation,
+                    "Ammu-Nation +",
                     "Alert",
-                    "~r~You haven't finished the current heist yet!",
+                    "~w~This feature will be available once you deliver or destroy the weapons...",
                     true,
                     false
                 );
@@ -2196,12 +2212,12 @@ namespace moreammunation
                         heistBlip.Name = "Delivery Point";
                         heistBlip.ShowRoute = true;
 
-                        GTA.UI.Screen.ShowSubtitle("~g~ Heist started!~g~ ~w~ Deliver the weapons to the destination.", 5000);
+                        GTA.UI.Screen.ShowSubtitle("~g~ Mission started!~g~ ~w~ Deliver the weapons to the destination.", 5000);
                         GTA.UI.Notification.Show(
                             GTA.UI.NotificationIcon.MpFIBContact,
                             "Agent 16",
                             "Ammu-Nation +",
-                            "~w~Great job, hotshot. But the stolen weapons just got flagged on the radar.~n~Haul them to the drop — I’ll handle the heat when you arrive. Don’t screw it up.",
+                            "~w~Damn it ! The stolen weapons just got flagged on the radar. I sent you the destination to deliver the stolen goods. Good luck...",
                             true,
                             false
                         );
