@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -53,16 +53,25 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Class1.cs" />
-    <Compile Include="Data\Data.cs" />
-    <Compile Include="Data\WeaponPrices.cs" />
-    <Compile Include="Models\AreaVehicle.cs" />
-    <Compile Include="Models\ArmoryZone.cs" />
-    <Compile Include="Models\HeistLocation.cs" />
-    <Compile Include="Models\PedRespawn.cs" />
-    <Compile Include="Models\VehicleRespawn.cs" />
-    <Compile Include="Models\WeaponUI.cs" />
+    <Compile Include="Core\LocationHelper.cs" />
+    <Compile Include="Core\Settings.cs" />
+    <Compile Include="Core\Spawning.cs" />
+    <Compile Include="Core\Util.cs" />
+    <Compile Include="Data\WeaponCatalog.cs" />
+    <Compile Include="Main.cs" />
+    <Compile Include="Missions\ConvoyHijackMission.cs" />
+    <Compile Include="Missions\DestroyTargetMission.cs" />
+    <Compile Include="Missions\GangMissions.cs" />
+    <Compile Include="Missions\Mission.cs" />
+    <Compile Include="Missions\MissionManager.cs" />
+    <Compile Include="Missions\StoreDefenseMission.cs" />
+    <Compile Include="Missions\TruckRobberyMission.cs" />
+    <Compile Include="Models\Models.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Shop\ShopMenu.cs" />
+    <Compile Include="Shop\WeaponCustomizer.cs" />
+    <Compile Include="Shop\WeaponPanel.cs" />
+    <Compile Include="World\ArmoryZoneManager.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
