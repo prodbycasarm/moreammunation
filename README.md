@@ -89,3 +89,11 @@
   <h2>🛠️ Developed by</h2>
   <p>Script by: <strong>casarm</strong><br>
   Powered by: <strong>LemonUI</strong> and <strong>ScriptHookVDotNet</strong></p>
+
+  <h2>🆕 Rework (see CHANGES.md)</h2>
+  <ul>
+    <li>Agent 16 jobs now start at the location <strong>nearest to you</strong>, from the phone or the new "Jobs" entry in the shop.</li>
+    <li>New jobs: Hijack the Convoy, Raid a Gun Stash, Eliminate the Dealer, Defend the Store.</li>
+    <li>All settings (keys, prices, mission options) are listed in <code>MoreAmmunationsMod\moreammunation.example.ini</code>.</li>
+    <li>Copy the whole <code>MoreAmmunationsMod</code> folder to <code>scripts\</code>. Errors are logged to <code>scripts\MoreAmmunationsMod\log.txt</code>.</li>
+  </ul>
